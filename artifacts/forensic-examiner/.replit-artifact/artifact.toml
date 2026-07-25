@@ -1,0 +1,27 @@
+kind = "web"
+previewPath = "/"
+title = "Forensic Document Examiner"
+version = "1.0.0"
+id = "artifacts/forensic-examiner"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 20398
+
+[services.development]
+run = "pnpm --filter @workspace/forensic-examiner run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/forensic-examiner", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/forensic-examiner/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "20398"
+BASE_PATH = "/"

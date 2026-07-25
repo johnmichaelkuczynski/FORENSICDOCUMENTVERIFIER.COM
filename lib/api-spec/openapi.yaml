@@ -1,0 +1,290 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 0.1.0
+  description: Forensic Document Examiner API
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: documents
+    description: Document analysis operations
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      description: Returns server health status
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  /documents:
+    get:
+      operationId: listDocuments
+      tags: [documents]
+      summary: List all document analyses
+      responses:
+        "200":
+          description: List of document analyses
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DocumentAnalysis"
+
+  /documents/stats:
+    get:
+      operationId: getDocumentStats
+      tags: [documents]
+      summary: Get aggregate stats about analyzed documents
+      responses:
+        "200":
+          description: Aggregate statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentStats"
+
+  /documents/analyze:
+    post:
+      operationId: analyzeDocument
+      tags: [documents]
+      summary: Upload and analyze a document for forgery
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/DocumentUpload"
+      responses:
+        "202":
+          description: Analysis accepted and queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentAnalysis"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /documents/{id}:
+    get:
+      operationId: getDocument
+      tags: [documents]
+      summary: Get a document analysis by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Document analysis result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentAnalysis"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteDocument
+      tags: [documents]
+      summary: Delete a document and its analysis
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /documents/{id}/reanalyze:
+    post:
+      operationId: reanalyzeDocument
+      tags: [documents]
+      summary: Re-run analysis on an existing document
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "202":
+          description: Re-analysis accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentAnalysis"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+
+    DocumentUpload:
+      type: object
+      required: [file, claimedIdentity]
+      properties:
+        file:
+          type: string
+          format: binary
+          description: The PDF document to analyze
+        claimedIdentity:
+          type: string
+          description: What the submitting party claims this document is (e.g. "a letter from First National Bank dated March 2022")
+
+    Finding:
+      type: object
+      required: [category, severity, title, description]
+      properties:
+        category:
+          type: string
+          description: Category of the finding (e.g. metadata, software, timestamp, content, fonts)
+        severity:
+          type: string
+          enum: [info, low, medium, high, critical]
+        title:
+          type: string
+        description:
+          type: string
+
+    DocumentMetadata:
+      type: object
+      properties:
+        author:
+          type: ["string", "null"]
+        creator:
+          type: ["string", "null"]
+        producer:
+          type: ["string", "null"]
+        creationDate:
+          type: ["string", "null"]
+        modificationDate:
+          type: ["string", "null"]
+        pageCount:
+          type: ["integer", "null"]
+        fileSize:
+          type: integer
+        encrypted:
+          type: boolean
+        hasDigitalSignature:
+          type: boolean
+        pdfVersion:
+          type: ["string", "null"]
+
+    DocumentAnalysis:
+      type: object
+      required: [id, status, fileName, fileSize, claimedIdentity, createdAt]
+      properties:
+        id:
+          type: integer
+        status:
+          type: string
+          enum: [pending, analyzing, complete, error]
+        fileName:
+          type: string
+        fileSize:
+          type: integer
+        claimedIdentity:
+          type: string
+        verdict:
+          type: ["string", "null"]
+          enum: [authentic, suspicious, likely_forged, inconclusive, null]
+        confidenceScore:
+          type: ["integer", "null"]
+          description: 0-100 confidence in the verdict
+        summary:
+          type: ["string", "null"]
+        findings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Finding"
+        metadata:
+          oneOf:
+            - $ref: "#/components/schemas/DocumentMetadata"
+            - type: "null"
+        errorMessage:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    DocumentStats:
+      type: object
+      required: [total, byVerdict, byStatus, recentCount]
+      properties:
+        total:
+          type: integer
+        byVerdict:
+          type: object
+          properties:
+            authentic:
+              type: integer
+            suspicious:
+              type: integer
+            likely_forged:
+              type: integer
+            inconclusive:
+              type: integer
+        byStatus:
+          type: object
+          properties:
+            pending:
+              type: integer
+            analyzing:
+              type: integer
+            complete:
+              type: integer
+            error:
+              type: integer
+        recentCount:
+          type: integer
+          description: Documents analyzed in the last 7 days
