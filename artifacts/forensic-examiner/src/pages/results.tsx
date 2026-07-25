@@ -3,7 +3,11 @@ import { useParams, useLocation } from 'wouter';
 import { useGetDocument, getGetDocumentQueryKey, useReanalyzeDocument, useDeleteDocument, type DocumentAnalysis } from '@workspace/api-client-react';
 import { VerdictBadge } from '@/components/VerdictBadge';
 import { FindingsList } from '@/components/FindingsList';
-import { Loader2, RefreshCcw, Trash2, ArrowLeft, FileText, Calendar, Hash, FileKey, Fingerprint, AlertTriangle, Download } from 'lucide-react';
+import {
+  Loader2, RefreshCcw, Trash2, ArrowLeft, FileText, FileKey, Fingerprint,
+  AlertTriangle, Download, ChevronDown, ChevronRight, Shield, Code2,
+  Type, Link2, Clock, Database, AlertOctagon, CheckCircle, XCircle, Minus
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { format } from 'date-fns';
 import { useToast } from '@/hooks/use-toast';
@@ -308,6 +312,274 @@ async function downloadForensicReport(doc: DocData) {
   pdf.save(`forensic_report_${safeName}.pdf`);
 }
 
+// ── Deep metadata types (mirror server DocumentMetadata) ──────────────────
+
+interface FontInfo { name: string; type: string | null; encoding: string | null; embedded: boolean; subset: boolean; }
+interface XmpHistoryEntry { action: string | null; instanceId: string | null; when: string | null; softwareAgent: string | null; changed: string | null; }
+interface EmbeddedUrl { url: string; context: string | null; }
+
+interface DeepMeta {
+  author?: string | null; creator?: string | null; producer?: string | null;
+  creationDate?: string | null; modificationDate?: string | null; pageCount?: number | null;
+  fileSize?: number; pdfVersion?: string | null;
+  xmpToolkit?: string | null; xmpCreatorTool?: string | null;
+  xmpCreateDate?: string | null; xmpModifyDate?: string | null; xmpMetadataDate?: string | null;
+  documentId?: string | null; instanceId?: string | null; originalDocumentId?: string | null;
+  title?: string | null; subject?: string | null; description?: string | null;
+  keywords?: string | null; rights?: string | null; language?: string | null;
+  linearized?: boolean | null; tagged?: boolean | null;
+  pageLayout?: string | null; pageMode?: string | null; pageSize?: string | null; pdfSecurity?: string | null;
+  encrypted?: boolean; encryptionMethod?: string | null; encryptionKeyLength?: number | null; userAccess?: string | null;
+  hasDigitalSignature?: boolean; signatureCount?: number;
+  incrementalSaveCount?: number; hasJavaScript?: boolean; hasEmbeddedFiles?: boolean;
+  hasLaunchActions?: boolean; hasAcroForm?: boolean; hasObjectStreams?: boolean;
+  hasXRefStreams?: boolean; hasExternalLinks?: boolean;
+  embeddedUrls?: EmbeddedUrl[]; rawObjectCount?: number | null;
+  fonts?: FontInfo[]; fontCount?: number; embeddedFontCount?: number; suspectFonts?: string[];
+  xmpHistory?: XmpHistoryEntry[]; totalEditSessions?: number;
+  exiftoolRaw?: Record<string, unknown> | null;
+}
+
+// ── Helper sub-components ──────────────────────────────────────────────────
+
+function MetaRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <tr className="hover:bg-secondary/10 border-b border-border/40 last:border-0">
+      <td className="py-2 px-4 text-[11px] font-mono text-muted-foreground align-top w-[38%]">{label}</td>
+      <td className="py-2 px-4 text-[11px] font-mono text-foreground break-all">{value ?? <span className="text-muted-foreground/40 italic">—</span>}</td>
+    </tr>
+  );
+}
+
+function BoolBadge({ val, label }: { val: boolean | null | undefined; label: string }) {
+  if (val == null) return (
+    <div className="flex items-center gap-2 px-3 py-2 rounded-md bg-card border border-border/40">
+      <Minus className="h-3.5 w-3.5 text-muted-foreground/50 shrink-0" />
+      <span className="text-[11px] font-mono text-muted-foreground">{label}</span>
+    </div>
+  );
+  const isAlert = val && ['JavaScript','Launch Action','Embedded File'].some(w => label.includes(w));
+  return (
+    <div className={`flex items-center gap-2 px-3 py-2 rounded-md border ${
+      val
+        ? isAlert ? 'bg-destructive/10 border-destructive/30' : 'bg-primary/5 border-primary/20'
+        : 'bg-card border-border/40'
+    }`}>
+      {val
+        ? isAlert
+          ? <AlertOctagon className="h-3.5 w-3.5 text-destructive shrink-0" />
+          : <CheckCircle className="h-3.5 w-3.5 text-primary shrink-0" />
+        : <XCircle className="h-3.5 w-3.5 text-muted-foreground/40 shrink-0" />}
+      <span className={`text-[11px] font-mono ${val ? isAlert ? 'text-destructive' : 'text-primary' : 'text-muted-foreground/60'}`}>{label}</span>
+    </div>
+  );
+}
+
+function SectionHeader({ icon: Icon, title, count }: { icon: React.ElementType; title: string; count?: number }) {
+  return (
+    <div className="flex items-center gap-3 border-b border-border pb-3 mb-5">
+      <Icon className="h-4 w-4 text-primary" />
+      <h3 className="text-base font-serif text-foreground">{title}</h3>
+      {count != null && <span className="ml-auto font-mono text-xs text-muted-foreground bg-secondary/30 px-2 py-0.5 rounded">{count}</span>}
+    </div>
+  );
+}
+
+function CollapsibleSection({ title, icon: Icon, defaultOpen = false, children }: {
+  title: string; icon: React.ElementType; defaultOpen?: boolean; children: React.ReactNode;
+}) {
+  const [open, setOpen] = React.useState(defaultOpen);
+  return (
+    <div className="bg-card border border-border rounded-xl overflow-hidden">
+      <button onClick={() => setOpen(v => !v)} className="w-full flex items-center gap-3 px-6 py-4 text-left hover:bg-secondary/10 transition-colors">
+        <Icon className="h-4 w-4 text-primary shrink-0" />
+        <span className="font-serif text-foreground">{title}</span>
+        {open ? <ChevronDown className="h-4 w-4 text-muted-foreground ml-auto" /> : <ChevronRight className="h-4 w-4 text-muted-foreground ml-auto" />}
+      </button>
+      {open && <div className="px-6 pb-6">{children}</div>}
+    </div>
+  );
+}
+
+function DeepMetadata({ meta }: { meta: DeepMeta }) {
+  const [rawOpen, setRawOpen] = React.useState(false);
+
+  const xmpRows: [string, React.ReactNode][] = [
+    ['XMP Creator Tool',     meta.xmpCreatorTool],
+    ['XMP Toolkit',          meta.xmpToolkit],
+    ['XMP Create Date',      meta.xmpCreateDate],
+    ['XMP Modify Date',      meta.xmpModifyDate],
+    ['XMP Metadata Date',    meta.xmpMetadataDate],
+    ['Document GUID',        meta.documentId ? <span className="text-primary/80">{meta.documentId}</span> : null],
+    ['Instance ID',          meta.instanceId ? <span className="text-primary/80">{meta.instanceId}</span> : null],
+    ['Original Document ID', meta.originalDocumentId],
+    ['Title',                meta.title],
+    ['Subject',              meta.subject],
+    ['Description',          meta.description],
+    ['Keywords',             meta.keywords],
+    ['Language',             meta.language],
+    ['Rights',               meta.rights],
+    ['Page Layout',          meta.pageLayout],
+    ['Page Mode',            meta.pageMode],
+    ['Page Size',            meta.pageSize],
+    ['PDF Security',         meta.pdfSecurity],
+    ['Linearized',           meta.linearized != null ? String(meta.linearized) : null],
+    ['Tagged PDF',           meta.tagged != null ? String(meta.tagged) : null],
+    ['Encryption Method',    meta.encryptionMethod],
+    ['User Access',          meta.userAccess],
+    ['Approx. Object Count', meta.rawObjectCount],
+  ].filter(([, v]) => v != null) as [string, React.ReactNode][];
+
+  return (
+    <div className="space-y-4 pt-4">
+      <div className="flex items-center gap-3 pt-4 mb-2">
+        <div className="h-px flex-1 bg-border" />
+        <span className="font-mono text-xs text-muted-foreground uppercase tracking-widest px-3">Deep Forensic Analysis</span>
+        <div className="h-px flex-1 bg-border" />
+      </div>
+
+      {/* ── XMP + Extended Metadata ─────────────────────────────── */}
+      {xmpRows.length > 0 && (
+        <CollapsibleSection title="XMP & Extended Metadata" icon={Database} defaultOpen>
+          <table className="w-full">
+            <tbody>{xmpRows.map(([k, v]) => <MetaRow key={k} label={k} value={v} />)}</tbody>
+          </table>
+        </CollapsibleSection>
+      )}
+
+      {/* ── Structural Analysis ─────────────────────────────────── */}
+      <CollapsibleSection title="Structural Analysis" icon={Shield} defaultOpen>
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            <BoolBadge val={meta.hasJavaScript} label="JavaScript (/JS)" />
+            <BoolBadge val={meta.hasLaunchActions} label="Launch Action" />
+            <BoolBadge val={meta.hasEmbeddedFiles} label="Embedded File" />
+            <BoolBadge val={meta.hasAcroForm} label="AcroForm Fields" />
+            <BoolBadge val={meta.hasObjectStreams} label="Object Streams" />
+            <BoolBadge val={meta.hasXRefStreams} label="XRef Streams" />
+            <BoolBadge val={meta.hasDigitalSignature} label="Digital Signature" />
+            <BoolBadge val={meta.linearized} label="Linearized (web)" />
+            <BoolBadge val={meta.encrypted} label="Encrypted" />
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 pt-2">
+            {[
+              ['Incremental Saves', meta.incrementalSaveCount != null ? `${meta.incrementalSaveCount} additional save${meta.incrementalSaveCount !== 1 ? 's' : ''}` : null],
+              ['Signatures', meta.signatureCount != null ? `${meta.signatureCount} found` : null],
+              ['Objects', meta.rawObjectCount != null ? `~${meta.rawObjectCount} objects` : null],
+              ['Total Edit Sessions', meta.totalEditSessions != null ? `${meta.totalEditSessions} recorded` : null],
+              ['Embedded URLs', meta.embeddedUrls?.length != null ? `${meta.embeddedUrls.length} found` : null],
+            ].filter(([, v]) => v != null).map(([label, value]) => (
+              <div key={label as string} className="bg-secondary/10 rounded-lg p-3 border border-border/40">
+                <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest mb-1">{label}</div>
+                <div className="text-sm font-mono text-foreground">{value as string}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </CollapsibleSection>
+
+      {/* ── Font Analysis ─────────────────────────────────────────── */}
+      {(meta.fonts?.length ?? 0) > 0 && (
+        <CollapsibleSection title={`Font Analysis (${meta.fontCount} fonts, ${meta.embeddedFontCount} embedded)`} icon={Type} defaultOpen>
+          <div className="overflow-x-auto">
+            <table className="w-full text-[11px] font-mono">
+              <thead>
+                <tr className="border-b border-border text-muted-foreground">
+                  <th className="text-left py-2 px-3 font-normal">Font Name</th>
+                  <th className="text-left py-2 px-3 font-normal">Type</th>
+                  <th className="text-left py-2 px-3 font-normal">Encoding</th>
+                  <th className="text-left py-2 px-3 font-normal">Embedded</th>
+                  <th className="text-left py-2 px-3 font-normal">Subset</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/30">
+                {meta.fonts?.map((f, i) => (
+                  <tr key={i} className={`hover:bg-secondary/10 ${meta.suspectFonts?.includes(f.name) ? 'bg-destructive/5' : ''}`}>
+                    <td className="py-2 px-3 text-foreground">
+                      {meta.suspectFonts?.includes(f.name) && <AlertOctagon className="h-3 w-3 text-destructive inline mr-1.5" />}
+                      {f.name}
+                    </td>
+                    <td className="py-2 px-3 text-muted-foreground">{f.type ?? '—'}</td>
+                    <td className="py-2 px-3 text-muted-foreground">{f.encoding ?? '—'}</td>
+                    <td className="py-2 px-3">
+                      {f.embedded ? <CheckCircle className="h-3.5 w-3.5 text-primary" /> : <XCircle className="h-3.5 w-3.5 text-muted-foreground/40" />}
+                    </td>
+                    <td className="py-2 px-3">
+                      {f.subset ? <CheckCircle className="h-3.5 w-3.5 text-primary" /> : <XCircle className="h-3.5 w-3.5 text-muted-foreground/40" />}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </CollapsibleSection>
+      )}
+
+      {/* ── XMP Edit History ──────────────────────────────────────── */}
+      {(meta.xmpHistory?.length ?? 0) > 0 && (
+        <CollapsibleSection title={`XMP Edit History (${meta.xmpHistory?.length} sessions)`} icon={Clock} defaultOpen>
+          <div className="space-y-2">
+            {meta.xmpHistory?.map((h, i) => (
+              <div key={i} className="bg-secondary/10 border border-border/40 rounded-lg p-3 text-[11px] font-mono grid grid-cols-2 gap-x-4 gap-y-1">
+                {h.when        && <><span className="text-muted-foreground">When</span><span className="text-foreground">{h.when}</span></>}
+                {h.action      && <><span className="text-muted-foreground">Action</span><span className="text-primary/80">{h.action}</span></>}
+                {h.softwareAgent && <><span className="text-muted-foreground">Software</span><span className="text-foreground col-span-1 truncate" title={h.softwareAgent}>{h.softwareAgent}</span></>}
+                {h.instanceId  && <><span className="text-muted-foreground">Instance ID</span><span className="text-foreground/60 truncate text-[10px]">{h.instanceId}</span></>}
+                {h.changed     && <><span className="text-muted-foreground">Changed</span><span className="text-foreground">{h.changed}</span></>}
+              </div>
+            ))}
+          </div>
+        </CollapsibleSection>
+      )}
+
+      {/* ── Embedded URLs ─────────────────────────────────────────── */}
+      {(meta.embeddedUrls?.length ?? 0) > 0 && (
+        <CollapsibleSection title={`Embedded URLs (${meta.embeddedUrls?.length})`} icon={Link2}>
+          <div className="space-y-1.5">
+            {meta.embeddedUrls?.map((u, i) => (
+              <div key={i} className="flex items-center gap-2 bg-secondary/10 border border-border/40 rounded px-3 py-2">
+                <Link2 className="h-3 w-3 text-primary shrink-0" />
+                <span className="text-[11px] font-mono text-foreground/80 break-all">{u.url}</span>
+              </div>
+            ))}
+          </div>
+        </CollapsibleSection>
+      )}
+
+      {/* ── Raw ExifTool Dump ─────────────────────────────────────── */}
+      {meta.exiftoolRaw && Object.keys(meta.exiftoolRaw).length > 0 && (
+        <div className="bg-card border border-border rounded-xl overflow-hidden">
+          <button onClick={() => setRawOpen(v => !v)} className="w-full flex items-center gap-3 px-6 py-4 text-left hover:bg-secondary/10 transition-colors">
+            <Code2 className="h-4 w-4 text-muted-foreground shrink-0" />
+            <span className="font-serif text-muted-foreground">Raw ExifTool Output</span>
+            <span className="ml-2 font-mono text-xs text-muted-foreground/60">({Object.keys(meta.exiftoolRaw).length} fields)</span>
+            {rawOpen ? <ChevronDown className="h-4 w-4 text-muted-foreground ml-auto" /> : <ChevronRight className="h-4 w-4 text-muted-foreground ml-auto" />}
+          </button>
+          {rawOpen && (
+            <div className="px-6 pb-6 max-h-96 overflow-y-auto">
+              <table className="w-full">
+                <tbody className="divide-y divide-border/20">
+                  {Object.entries(meta.exiftoolRaw).map(([k, v]) => {
+                    const display = typeof v === 'object' && v !== null && 'val' in v
+                      ? String((v as { val: unknown }).val)
+                      : String(v ?? '');
+                    return display ? (
+                      <tr key={k} className="hover:bg-secondary/5">
+                        <td className="py-1.5 px-3 text-[10px] font-mono text-muted-foreground/70 w-[40%] align-top">{k}</td>
+                        <td className="py-1.5 px-3 text-[10px] font-mono text-foreground/70 break-all">{display}</td>
+                      </tr>
+                    ) : null;
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function ResultsPage() {
   const { id } = useParams();
   const docId = id ? parseInt(id, 10) : null;
@@ -539,25 +811,29 @@ export default function ResultsPage() {
                 <div className="space-y-6">
                   <div className="flex items-center gap-3 border-b border-border pb-4">
                     <FileKey className="h-5 w-5 text-primary" />
-                    <h3 className="text-xl font-serif text-foreground">Extracted Metadata</h3>
+                    <h3 className="text-xl font-serif text-foreground">PDF Identity</h3>
                   </div>
-                  
                   <div className="bg-card border border-border rounded-lg overflow-hidden text-sm">
                     <table className="w-full text-left font-mono">
                       <tbody className="divide-y divide-border/50">
-                        {Object.entries({
-                          Author: doc.metadata.author,
-                          Creator: doc.metadata.creator,
-                          Producer: doc.metadata.producer,
-                          Created: doc.metadata.creationDate,
-                          Modified: doc.metadata.modificationDate,
-                          Pages: doc.metadata.pageCount,
-                          Version: doc.metadata.pdfVersion,
-                        }).map(([key, value]) => (
+                        {((): [string, unknown][] => {
+                          const m = doc.metadata as DeepMeta;
+                          return [
+                            ['Author',    m.author],
+                            ['Creator',   m.creator],
+                            ['Producer',  m.producer],
+                            ['XMP Tool',  m.xmpCreatorTool],
+                            ['Created',   m.creationDate],
+                            ['Modified',  m.modificationDate],
+                            ['Pages',     m.pageCount],
+                            ['Version',   m.pdfVersion],
+                            ['Size',      `${((m.fileSize ?? 0) / 1024).toFixed(1)} KB`],
+                          ];
+                        })().map(([key, value]) => (
                           <tr key={key} className="hover:bg-secondary/10">
-                            <td className="py-2.5 px-4 text-muted-foreground w-1/3">{key}</td>
-                            <td className="py-2.5 px-4 text-foreground truncate max-w-[150px]" title={String(value || 'N/A')}>
-                              {value || <span className="text-muted-foreground/50 italic">Null</span>}
+                            <td className="py-2 px-4 text-muted-foreground w-[40%] text-[11px]">{key}</td>
+                            <td className="py-2 px-4 text-foreground truncate max-w-[140px] text-[11px]" title={String(value ?? 'N/A')}>
+                              {value != null && value !== '' ? String(value) : <span className="text-muted-foreground/40 italic">—</span>}
                             </td>
                           </tr>
                         ))}
@@ -567,8 +843,10 @@ export default function ResultsPage() {
                 </div>
               )}
             </div>
-
           </div>
+
+          {/* ── Deep Forensic Layers ────────────────────────────────────── */}
+          {doc.metadata && <DeepMetadata meta={doc.metadata as DeepMeta} />}
         </div>
       )}
     </div>
