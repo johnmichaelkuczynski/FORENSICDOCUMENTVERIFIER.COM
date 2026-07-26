@@ -47,6 +47,26 @@ export interface EmbeddedUrl {
   context: string | null;
 }
 
+export interface ProvenanceEvent {
+  timestamp: string | null;   // ISO-ish datetime
+  event: string;              // "created" | "saved" | "converted" | "printed" | "modified" | "exported"
+  agent: string | null;       // Software that performed the action
+  detail: string | null;      // Human-readable extra context
+}
+
+export interface MergedComponent {
+  index: number;
+  title: string | null;
+  author: string | null;
+  creator: string | null;
+  producer: string | null;
+  creationDate: string | null;
+  modificationDate: string | null;
+  documentId: string | null;
+  instanceId: string | null;
+  detectionMethod: string;    // "xmpIngredients" | "infoDictionary"
+}
+
 export interface DocumentMetadata {
   // ── File integrity ────────────────────────────────────────────────────────
   sha256: string | null;
@@ -121,6 +141,18 @@ export interface DocumentMetadata {
 
   // ── All raw ExifTool output ───────────────────────────────────────────────
   exiftoolRaw: Record<string, unknown> | null;
+
+  // ── Document History / Provenance ─────────────────────────────────────────
+  sourceUrl: string | null;           // URL the document was downloaded from, if detected
+  originType: string | null;          // "web-download" | "print-to-pdf" | "native-app" | "cloud-service" | "converted" | "scanned" | "unknown"
+  originApp: string | null;           // e.g. "Google Chrome", "Microsoft Word"
+  softwareChain: string[];            // Every piece of software that touched the doc, in order
+  provenanceTimeline: ProvenanceEvent[];
+
+  // ── Merged document analysis ──────────────────────────────────────────────
+  isMergedDocument: boolean;
+  mergedComponents: MergedComponent[];
+  derivedFromId: string | null;       // xmpMM:DerivedFrom DocumentID
 }
 
 export const insertDocumentSchema = createInsertSchema(documentsTable).omit({

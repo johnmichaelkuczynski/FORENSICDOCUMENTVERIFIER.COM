@@ -6,7 +6,7 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import pdfParse from "pdf-parse";
 import { openai } from "@workspace/integrations-openai-ai-server";
-import type { DocumentMetadata, Finding, FontInfo, XmpHistoryEntry, EmbeddedUrl } from "@workspace/db";
+import type { DocumentMetadata, Finding, FontInfo, XmpHistoryEntry, EmbeddedUrl, ProvenanceEvent, MergedComponent } from "@workspace/db";
 import { logger } from "./logger";
 
 const execFileAsync = promisify(execFile);
@@ -192,6 +192,226 @@ function analyzeBinary(buf: Buffer): BinaryAnalysis {
   };
 }
 
+// ─── Provenance & origin detection ──────────────────────────────────────────
+
+function detectOrigin(
+  creator: string,
+  producer: string,
+  creatorTool: string,
+  rawText: string,
+): { originType: string; originApp: string } {
+  const all = `${creator} ${producer} ${creatorTool}`.toLowerCase();
+  const prod = producer.toLowerCase();
+
+  if (/microsoft\s*print\s*to\s*pdf|microsoft:print/.test(all))
+    return { originType: "print-to-pdf", originApp: "Microsoft Print to PDF" };
+  if (/skia/.test(prod)) {
+    if (/edge/.test(all))            return { originType: "web-download",  originApp: "Microsoft Edge" };
+    if (/chrome|chromium/.test(all)) return { originType: "web-download",  originApp: "Google Chrome" };
+    if (/google\s*docs/.test(all))   return { originType: "cloud-service", originApp: "Google Docs" };
+    return { originType: "web-download", originApp: "Chromium-based Browser" };
+  }
+  if (/mozilla|firefox/.test(all))
+    return { originType: "web-download",  originApp: "Mozilla Firefox" };
+  if (/safari/.test(all) && !/mozilla/.test(all))
+    return { originType: "web-download",  originApp: "Apple Safari" };
+  if (/quartz|mac\s*os\s*x|macos/.test(all))
+    return { originType: "print-to-pdf",  originApp: "macOS (Print / Preview)" };
+  if (/microsoft word/.test(all))
+    return { originType: "native-app",    originApp: "Microsoft Word" };
+  if (/microsoft excel/.test(all))
+    return { originType: "native-app",    originApp: "Microsoft Excel" };
+  if (/microsoft powerpoint/.test(all))
+    return { originType: "native-app",    originApp: "Microsoft PowerPoint" };
+  if (/microsoft office/.test(all))
+    return { originType: "native-app",    originApp: "Microsoft Office" };
+  if (/libreoffice|openoffice/.test(all))
+    return { originType: "native-app",    originApp: "LibreOffice / OpenOffice" };
+  if (/acrobat distiller|adobe acrobat/.test(all))
+    return { originType: "native-app",    originApp: "Adobe Acrobat" };
+  if (/adobe indesign/.test(all))
+    return { originType: "native-app",    originApp: "Adobe InDesign" };
+  if (/adobe illustrator/.test(all))
+    return { originType: "native-app",    originApp: "Adobe Illustrator" };
+  if (/canva/.test(all))
+    return { originType: "cloud-service", originApp: "Canva" };
+  if (/google/.test(all))
+    return { originType: "cloud-service", originApp: "Google Workspace" };
+  if (/pdfcreator/.test(all))
+    return { originType: "print-to-pdf",  originApp: "PDFCreator" };
+  if (/cups.pdf/.test(all))
+    return { originType: "print-to-pdf",  originApp: "CUPS-PDF (Linux)" };
+  if (/ghostscript/.test(all))
+    return { originType: "converted",     originApp: "Ghostscript" };
+  if (/wkhtmltopdf/.test(all))
+    return { originType: "converted",     originApp: "wkhtmltopdf" };
+  if (/aspose/.test(all))
+    return { originType: "converted",     originApp: "Aspose PDF" };
+  if (/itext/.test(all))
+    return { originType: "converted",     originApp: "iText PDF Library" };
+  if (/reportlab/.test(all))
+    return { originType: "converted",     originApp: "ReportLab" };
+  if (/fpdf/.test(all))
+    return { originType: "converted",     originApp: "FPDF Library" };
+  if (!rawText || rawText.trim().length < 30)
+    return { originType: "scanned",       originApp: "Scanner / OCR" };
+  return { originType: "unknown", originApp: "Unknown" };
+}
+
+function buildProvenanceProfile(
+  exifRaw: Record<string, unknown>,
+  m: DocumentMetadata,
+  rawText: string,
+): {
+  sourceUrl: string | null;
+  originType: string;
+  originApp: string;
+  softwareChain: string[];
+  provenanceTimeline: ProvenanceEvent[];
+} {
+  // Source URL — browsers often embed this when saving a PDF from the web
+  const sourceUrl =
+    exifVal(exifRaw,
+      "PDF:URL", "XMP-pdf:Source", "XMP-dc:Source",
+      "XMP-xap:Identifier", "SourceURL", "PDF:SourceURL",
+    ) ?? null;
+
+  const { originType, originApp } = detectOrigin(
+    m.creator ?? "", m.producer ?? "", m.xmpCreatorTool ?? "", rawText,
+  );
+
+  // Software chain — ordered: creator tool → creator → history agents → producer
+  const seenLower = new Set<string>();
+  const softwareChain: string[] = [];
+  const addSw = (s: string | null | undefined) => {
+    if (!s) return;
+    const c = s.trim();
+    if (!c || seenLower.has(c.toLowerCase())) return;
+    seenLower.add(c.toLowerCase());
+    softwareChain.push(c);
+  };
+  addSw(m.xmpCreatorTool);
+  addSw(m.creator);
+  const sortedHist = [...m.xmpHistory].sort((a, b) =>
+    (a.when ?? "").localeCompare(b.when ?? ""),
+  );
+  for (const h of sortedHist) addSw(h.softwareAgent);
+  addSw(m.producer);
+
+  // Provenance timeline
+  const events: ProvenanceEvent[] = [];
+  const push = (ts: string | null, ev: string, agent: string | null, detail: string | null) => {
+    events.push({ timestamp: ts, event: ev, agent, detail });
+  };
+
+  if (m.creationDate)
+    push(m.creationDate, "created", m.xmpCreatorTool ?? m.creator,
+      originApp !== "Unknown" ? `Created with ${originApp}` : null);
+
+  for (const h of sortedHist)
+    push(h.when, h.action ?? "modified", h.softwareAgent,
+      h.changed ? `Changed: ${h.changed}` : null);
+
+  if (m.modificationDate && m.modificationDate !== m.creationDate) {
+    const covered = events.some(
+      (e) => e.timestamp === m.modificationDate && e.event !== "created",
+    );
+    if (!covered)
+      push(m.modificationDate, "modified", m.producer ?? null,
+        "Last recorded modification");
+  }
+
+  events.sort((a, b) => (a.timestamp ?? "9999").localeCompare(b.timestamp ?? "9999"));
+
+  return { sourceUrl, originType, originApp, softwareChain, provenanceTimeline: events };
+}
+
+// ─── Merged PDF component extractor ─────────────────────────────────────────
+
+function extractMergedComponents(
+  buf: Buffer,
+  exifRaw: Record<string, unknown>,
+  mainCreationDate: string | null,
+): { isMerged: boolean; components: MergedComponent[]; derivedFromId: string | null } {
+  const str = buf.toString("binary");
+  const components: MergedComponent[] = [];
+
+  // ── Method 1: XMP Ingredients (explicit merge marker) ───────────────────
+  const ingredients: Record<number, Record<string, string | null>> = {};
+  for (const [k, v] of Object.entries(exifRaw)) {
+    const m = k.match(/Ingredients\[(\d+)\]\s+(.+)/i);
+    if (!m) continue;
+    const idx = parseInt(m[1]);
+    const field = m[2].replace(/\s+/g, "").toLowerCase();
+    if (!ingredients[idx]) ingredients[idx] = {};
+    ingredients[idx][field] = v == null ? null : String(v).trim() || null;
+  }
+  for (const [idxStr, fields] of Object.entries(ingredients)) {
+    if (!fields["documentid"] && !fields["instanceid"]) continue;
+    const idx = parseInt(idxStr);
+    components.push({
+      index: idx,
+      title: fields["title"] ?? null,
+      author: fields["author"] ?? null,
+      creator: fields["creator"] ?? null,
+      producer: fields["producer"] ?? null,
+      creationDate: normalizeDate(fields["createdate"] ?? fields["creationdate"] ?? null),
+      modificationDate: normalizeDate(fields["modifydate"] ?? fields["modificationdate"] ?? null),
+      documentId: fields["documentid"] ?? null,
+      instanceId: fields["instanceid"] ?? null,
+      detectionMethod: "xmpIngredients",
+    });
+  }
+
+  // ── Method 2: Binary Info dictionary scanning ────────────────────────────
+  // Find obj blocks that contain multiple PDF Info dictionary keys
+  const objRe = /\d+\s+\d+\s+obj\s*<<([\s\S]{20,2000}?)>>\s*endobj/g;
+  const seenCreation = new Set<string>(mainCreationDate ? [mainCreationDate] : []);
+  const infoMarkers = ["/Author", "/Creator", "/Producer", "/Title", "/CreationDate", "/ModDate"];
+  let objMatch: RegExpExecArray | null;
+
+  const extractParenField = (block: string, field: string): string | null => {
+    const re = new RegExp(`/${field}\\s*\\(([^)]{1,300})\\)`);
+    const m = block.match(re);
+    return m ? m[1].trim() : null;
+  };
+
+  while ((objMatch = objRe.exec(str)) !== null) {
+    const block = objMatch[1];
+    if (infoMarkers.filter((f) => block.includes(f)).length < 2) continue;
+
+    const creation = normalizeDate(extractParenField(block, "CreationDate"));
+    if (!creation || seenCreation.has(creation)) continue;
+    seenCreation.add(creation);
+
+    const alreadyCaptured = components.some(
+      (c) => c.creationDate === creation && c.detectionMethod === "xmpIngredients",
+    );
+    if (alreadyCaptured) continue;
+
+    components.push({
+      index: components.length + 1,
+      title:            extractParenField(block, "Title"),
+      author:           extractParenField(block, "Author"),
+      creator:          extractParenField(block, "Creator"),
+      producer:         extractParenField(block, "Producer"),
+      creationDate:     creation,
+      modificationDate: normalizeDate(extractParenField(block, "ModDate")),
+      documentId: null,
+      instanceId: null,
+      detectionMethod: "infoDictionary",
+    });
+  }
+
+  components.sort((a, b) => (a.creationDate ?? "").localeCompare(b.creationDate ?? ""));
+
+  const derivedFromId =
+    exifVal(exifRaw, "XMP-xmpMM:DerivedFrom DocumentID", "XMP-xmpMM:DerivedFrom") ?? null;
+
+  const isMerged = components.length > 1 || Object.keys(ingredients).length > 0;
+  return { isMerged, components, derivedFromId };
+}
+
 // ─── Main metadata extractor ─────────────────────────────────────────────────
 
 function normalizeDate(raw: unknown): string | null {
@@ -321,7 +541,33 @@ export async function extractPdfMetadata(
 
     // Raw dump (trimmed to 200 keys max)
     exiftoolRaw: Object.fromEntries(Object.entries(exifRaw).slice(0, 200)),
+
+    // Provenance (populated below after base metadata is assembled)
+    sourceUrl: null,
+    originType: null,
+    originApp: null,
+    softwareChain: [],
+    provenanceTimeline: [],
+
+    // Merged components (populated below)
+    isMergedDocument: false,
+    mergedComponents: [],
+    derivedFromId: null,
   };
+
+  // ── Provenance profile ─────────────────────────────────────────────────────
+  const provenance = buildProvenanceProfile(exifRaw, metadata, rawText);
+  metadata.sourceUrl = provenance.sourceUrl;
+  metadata.originType = provenance.originType;
+  metadata.originApp = provenance.originApp;
+  metadata.softwareChain = provenance.softwareChain;
+  metadata.provenanceTimeline = provenance.provenanceTimeline;
+
+  // ── Merged PDF analysis ────────────────────────────────────────────────────
+  const merged = extractMergedComponents(buf, exifRaw, metadata.creationDate);
+  metadata.isMergedDocument = merged.isMerged;
+  metadata.mergedComponents = merged.components;
+  metadata.derivedFromId = merged.derivedFromId;
 
   return { metadata, rawText };
 }

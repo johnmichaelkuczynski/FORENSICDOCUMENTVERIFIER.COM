@@ -6,7 +6,9 @@ import { FindingsList } from '@/components/FindingsList';
 import {
   Loader2, RefreshCcw, Trash2, ArrowLeft, FileText, FileKey, Fingerprint,
   AlertTriangle, Download, ChevronDown, ChevronRight, Shield, Code2,
-  Type, Link2, Clock, Database, AlertOctagon, CheckCircle, XCircle, Minus
+  Type, Link2, Clock, Database, AlertOctagon, CheckCircle, XCircle, Minus,
+  Globe, Printer, Monitor, Cloud, Layers, GitMerge, Network, History,
+  ScanLine, ExternalLink
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { format } from 'date-fns';
@@ -312,6 +314,128 @@ async function downloadForensicReport(doc: DocData) {
     }
   }
 
+  // ── Document History ─────────────────────────────────────────────────────────
+  const dm = meta as Record<string, unknown> | null | undefined;
+  if (dm && (dm['originType'] || (dm['provenanceTimeline'] as unknown[] | undefined)?.length || dm['isMergedDocument'])) {
+    checkPage(30);
+    y += 4;
+    pdf.setDrawColor(...COLORS.border);
+    pdf.line(MARGIN, y, PAGE_W - MARGIN, y);
+    y += 8;
+
+    pdf.setFontSize(7);
+    pdf.setFont('helvetica', 'bold');
+    pdf.setTextColor(...COLORS.accent);
+    pdf.text('DOCUMENT HISTORY', MARGIN, y);
+    y += 6;
+
+    // Origin
+    if (dm['originApp'] || dm['originType']) {
+      checkPage(14);
+      pdf.setFillColor(...COLORS.card);
+      pdf.roundedRect(MARGIN, y, CONTENT_W, 12, 2, 2, 'F');
+      pdf.setFontSize(6);
+      pdf.setFont('helvetica', 'bold');
+      pdf.setTextColor(...COLORS.muted);
+      pdf.text('ORIGIN', MARGIN + 3, y + 4.5);
+      pdf.setFontSize(8);
+      pdf.setFont('helvetica', 'normal');
+      pdf.setTextColor(...COLORS.white);
+      pdf.text(String(dm['originApp'] ?? 'Unknown'), MARGIN + 3, y + 10);
+      if (dm['originType']) {
+        pdf.setFontSize(7);
+        pdf.setTextColor(...COLORS.accent);
+        pdf.text(`[${String(dm['originType']).replace(/-/g,' ').toUpperCase()}]`, MARGIN + 50, y + 10);
+      }
+      y += 16;
+    }
+
+    // Source URL
+    if (dm['sourceUrl']) {
+      checkPage(12);
+      pdf.setFontSize(6);
+      pdf.setFont('helvetica', 'bold');
+      pdf.setTextColor(...COLORS.muted);
+      pdf.text('SOURCE URL', MARGIN, y);
+      y += 4;
+      pdf.setFontSize(7);
+      pdf.setFont('helvetica', 'normal');
+      pdf.setTextColor(...COLORS.accent);
+      const urlLines = wrapText(String(dm['sourceUrl']), CONTENT_W, 7);
+      pdf.text(urlLines, MARGIN, y);
+      y += urlLines.length * 4 + 4;
+    }
+
+    // Software chain
+    const swChain = dm['softwareChain'] as string[] | undefined;
+    if (swChain && swChain.length > 0) {
+      checkPage(10 + swChain.length * 6);
+      pdf.setFontSize(6);
+      pdf.setFont('helvetica', 'bold');
+      pdf.setTextColor(...COLORS.muted);
+      pdf.text('SOFTWARE CHAIN', MARGIN, y);
+      y += 4;
+      swChain.forEach((sw, i) => {
+        checkPage(7);
+        pdf.setFillColor(...COLORS.card);
+        pdf.roundedRect(MARGIN, y, CONTENT_W, 6, 1, 1, 'F');
+        pdf.setFontSize(6.5);
+        pdf.setFont('helvetica', 'normal');
+        pdf.setTextColor(...COLORS.muted);
+        pdf.text(`${i + 1}`, MARGIN + 2, y + 4.5);
+        pdf.setTextColor(...COLORS.white);
+        const swTrunc = sw.length > 60 ? sw.slice(0, 58) + '…' : sw;
+        pdf.text(swTrunc, MARGIN + 8, y + 4.5);
+        y += 8;
+      });
+      y += 2;
+    }
+
+    // Merged components
+    const isMerged = dm['isMergedDocument'] as boolean | undefined;
+    const components = dm['mergedComponents'] as Array<Record<string,unknown>> | undefined;
+    if (isMerged && components && components.length > 0) {
+      checkPage(20);
+      pdf.setFontSize(6);
+      pdf.setFont('helvetica', 'bold');
+      pdf.setTextColor(234, 179, 8);
+      pdf.text(`ASSEMBLED FROM ${components.length} SOURCE PDFs`, MARGIN, y);
+      y += 5;
+      components.forEach((comp, i) => {
+        const fields = ([
+          ['Title',    comp['title']],
+          ['Author',   comp['author']],
+          ['Creator',  comp['creator']],
+          ['Created',  comp['creationDate']],
+          ['Doc ID',   comp['documentId']],
+        ] as [string, unknown][]).filter(([,v]) => v);
+        const blockH = 8 + fields.length * 5;
+        checkPage(blockH + 4);
+        pdf.setFillColor(16, 20, 30);
+        pdf.roundedRect(MARGIN, y, CONTENT_W, blockH, 2, 2, 'F');
+        pdf.setDrawColor(234, 179, 8);
+        pdf.setLineWidth(0.4);
+        pdf.roundedRect(MARGIN, y, CONTENT_W, blockH, 2, 2, 'S');
+        pdf.setFontSize(6);
+        pdf.setFont('helvetica', 'bold');
+        pdf.setTextColor(234, 179, 8);
+        pdf.text(`SOURCE #${comp['index'] ?? i + 1}  ·  ${String(comp['detectionMethod'] ?? '')}`, MARGIN + 3, y + 5);
+        let fy = y + 9;
+        fields.forEach(([label, value]) => {
+          pdf.setFont('helvetica', 'bold');
+          pdf.setTextColor(...COLORS.muted);
+          pdf.text(String(label).toUpperCase(), MARGIN + 3, fy);
+          pdf.setFont('helvetica', 'normal');
+          pdf.setTextColor(...COLORS.white);
+          const vTrunc = String(value).length > 55 ? String(value).slice(0, 53) + '…' : String(value);
+          pdf.text(vTrunc, MARGIN + 22, fy);
+          fy += 5;
+        });
+        y += blockH + 4;
+      });
+    }
+  }
+
   // ── Footer on every page ────────────────────────────────────────────────────
   const totalPages = (pdf as unknown as { internal: { getNumberOfPages(): number } }).internal.getNumberOfPages();
   for (let p = 1; p <= totalPages; p++) {
@@ -335,6 +459,9 @@ interface FontInfo { name: string; type: string | null; encoding: string | null;
 interface XmpHistoryEntry { action: string | null; instanceId: string | null; when: string | null; softwareAgent: string | null; changed: string | null; }
 interface EmbeddedUrl { url: string; context: string | null; }
 
+interface ProvenanceEvent { timestamp: string | null; event: string; agent: string | null; detail: string | null; }
+interface MergedComponent { index: number; title: string | null; author: string | null; creator: string | null; producer: string | null; creationDate: string | null; modificationDate: string | null; documentId: string | null; instanceId: string | null; detectionMethod: string; }
+
 interface DeepMeta {
   sha256?: string | null;
   author?: string | null; creator?: string | null; producer?: string | null;
@@ -356,6 +483,235 @@ interface DeepMeta {
   fonts?: FontInfo[]; fontCount?: number; embeddedFontCount?: number; suspectFonts?: string[];
   xmpHistory?: XmpHistoryEntry[]; totalEditSessions?: number;
   exiftoolRaw?: Record<string, unknown> | null;
+  // Document History / Provenance
+  sourceUrl?: string | null;
+  originType?: string | null;
+  originApp?: string | null;
+  softwareChain?: string[];
+  provenanceTimeline?: ProvenanceEvent[];
+  // Merged document analysis
+  isMergedDocument?: boolean;
+  mergedComponents?: MergedComponent[];
+  derivedFromId?: string | null;
+}
+
+// ── Origin icon helper ─────────────────────────────────────────────────────
+
+function OriginIcon({ type, className }: { type: string | null | undefined; className?: string }) {
+  const icons: Record<string, React.ElementType> = {
+    'web-download':  Globe,
+    'print-to-pdf':  Printer,
+    'native-app':    Monitor,
+    'cloud-service': Cloud,
+    'converted':     Layers,
+    'scanned':       ScanLine,
+    'unknown':       FileText,
+  };
+  const Icon = icons[type ?? 'unknown'] ?? FileText;
+  return <Icon className={className} />;
+}
+
+// ── Document History section ───────────────────────────────────────────────
+
+function DocumentHistorySection({ meta }: { meta: DeepMeta }) {
+  const originLabels: Record<string, string> = {
+    'web-download':  'Downloaded from the Web',
+    'print-to-pdf':  'Printed to PDF',
+    'native-app':    'Created in Desktop App',
+    'cloud-service': 'Created in Cloud Service',
+    'converted':     'Programmatically Converted',
+    'scanned':       'Scanned / Imaged',
+    'unknown':       'Unknown Origin',
+  };
+
+  const timeline    = meta.provenanceTimeline ?? [];
+  const swChain     = meta.softwareChain ?? [];
+  const isMerged    = meta.isMergedDocument ?? false;
+  const components  = meta.mergedComponents ?? [];
+  const hasAny      = !!meta.originType || timeline.length > 0 || swChain.length > 0 || isMerged;
+
+  if (!hasAny) return null;
+
+  return (
+    <div className="space-y-5">
+      {/* Section header */}
+      <div className="flex items-center gap-3">
+        <div className="h-px flex-1 bg-border" />
+        <span className="font-mono text-xs text-muted-foreground uppercase tracking-widest px-3">Document History</span>
+        <div className="h-px flex-1 bg-border" />
+      </div>
+
+      {/* Merged document alert */}
+      {isMerged && (
+        <div className="flex items-center gap-3 bg-amber-500/5 border border-amber-500/30 rounded-xl px-5 py-3">
+          <GitMerge className="h-5 w-5 text-amber-500 shrink-0" />
+          <div>
+            <span className="text-sm font-serif text-amber-400">Assembled Document</span>
+            <span className="ml-3 text-[11px] font-mono text-amber-500/70">
+              {components.length > 1
+                ? `${components.length} source PDFs identified inside this document`
+                : 'XMP Ingredients marker detected — document was merged from other PDFs'}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Three-column cards row */}
+      <div className="grid md:grid-cols-3 gap-4">
+
+        {/* Origin card */}
+        {meta.originType && (
+          <div className="bg-card border border-border rounded-xl p-5 space-y-4 flex flex-col">
+            <div className="flex items-center gap-2">
+              <OriginIcon type={meta.originType} className="h-4 w-4 text-primary" />
+              <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest">Origin</span>
+            </div>
+            <div className="flex-1">
+              <div className="text-base font-serif text-foreground leading-tight">
+                {meta.originApp ?? 'Unknown'}
+              </div>
+              <div className="mt-1.5 inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono bg-primary/10 text-primary border border-primary/20">
+                {originLabels[meta.originType] ?? meta.originType}
+              </div>
+            </div>
+            {meta.sourceUrl && (
+              <div className="pt-3 border-t border-border/50 space-y-1">
+                <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest">
+                  Source URL
+                </div>
+                <a
+                  href={meta.sourceUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-start gap-1.5 text-[11px] font-mono text-primary/80 break-all hover:text-primary transition-colors"
+                >
+                  <ExternalLink className="h-3 w-3 shrink-0 mt-0.5" />
+                  {meta.sourceUrl}
+                </a>
+              </div>
+            )}
+            {meta.derivedFromId && (
+              <div className="pt-2 border-t border-border/50 space-y-1">
+                <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest">
+                  Derived From
+                </div>
+                <div className="text-[10px] font-mono text-foreground/60 break-all">
+                  {meta.derivedFromId}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Provenance timeline */}
+        {timeline.length > 0 && (
+          <div className="bg-card border border-border rounded-xl p-5 space-y-3">
+            <div className="flex items-center gap-2">
+              <History className="h-4 w-4 text-primary" />
+              <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest">Event Timeline</span>
+            </div>
+            <div className="relative space-y-0">
+              {timeline.map((ev, i) => (
+                <div key={i} className="flex gap-3">
+                  {/* Timeline rail */}
+                  <div className="flex flex-col items-center w-3 shrink-0">
+                    <div className={`w-2 h-2 rounded-full shrink-0 mt-1 ${
+                      ev.event === 'created' ? 'bg-primary' :
+                      ev.event === 'modified' || ev.event === 'saved' ? 'bg-amber-500/80' : 'bg-muted-foreground/40'
+                    }`} />
+                    {i < timeline.length - 1 && <div className="w-px flex-1 bg-border/50 min-h-[8px]" />}
+                  </div>
+                  <div className="pb-3 min-w-0">
+                    <div className="text-[11px] font-mono text-primary/80 capitalize">{ev.event}</div>
+                    {ev.timestamp && (
+                      <div className="text-[10px] font-mono text-muted-foreground">{ev.timestamp}</div>
+                    )}
+                    {ev.agent && (
+                      <div className="text-[10px] font-mono text-foreground/60 truncate" title={ev.agent}>
+                        {ev.agent}
+                      </div>
+                    )}
+                    {ev.detail && (
+                      <div className="text-[10px] text-muted-foreground/50">{ev.detail}</div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Software chain */}
+        {swChain.length > 0 && (
+          <div className="bg-card border border-border rounded-xl p-5 space-y-3">
+            <div className="flex items-center gap-2">
+              <Network className="h-4 w-4 text-primary" />
+              <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest">Software Chain</span>
+            </div>
+            <div className="space-y-2">
+              {swChain.map((sw, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <span className="text-[10px] font-mono text-muted-foreground/50 w-4 shrink-0 text-right">{i + 1}</span>
+                  <div
+                    className="flex-1 bg-secondary/20 rounded px-3 py-1.5 text-[11px] font-mono text-foreground/80 truncate border border-border/30"
+                    title={sw}
+                  >
+                    {sw}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="pt-1 text-[10px] font-mono text-muted-foreground/40">
+              Listed in chronological order of contact
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Merged component details */}
+      {isMerged && components.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <Layers className="h-4 w-4 text-amber-500" />
+            <span className="text-sm font-serif text-foreground">Source PDF Components</span>
+            <span className="px-2 py-0.5 text-[10px] font-mono bg-amber-500/10 text-amber-500 border border-amber-500/30 rounded ml-1">
+              {components.length} detected
+            </span>
+          </div>
+          <div className="grid sm:grid-cols-2 gap-4">
+            {components.map((comp, i) => (
+              <div key={i} className="bg-card border border-amber-500/20 rounded-xl p-5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-mono text-amber-400 uppercase tracking-widest">
+                    Source #{comp.index}
+                  </span>
+                  <span className="text-[9px] font-mono text-muted-foreground/50 bg-secondary/20 px-2 py-0.5 rounded">
+                    via {comp.detectionMethod === 'xmpIngredients' ? 'XMP Ingredients' : 'Binary Scan'}
+                  </span>
+                </div>
+                <div className="space-y-1.5">
+                  {([
+                    ['Title',    comp.title],
+                    ['Author',   comp.author],
+                    ['Creator',  comp.creator],
+                    ['Producer', comp.producer],
+                    ['Created',  comp.creationDate],
+                    ['Modified', comp.modificationDate],
+                    ['Doc ID',   comp.documentId],
+                  ] as [string, string | null][]).filter(([, v]) => v).map(([label, value]) => (
+                    <div key={label} className="flex gap-2 text-[11px] font-mono">
+                      <span className="text-muted-foreground w-16 shrink-0">{label}</span>
+                      <span className="text-foreground/80 break-all">{value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ── Helper sub-components ──────────────────────────────────────────────────
@@ -863,6 +1219,9 @@ export default function ResultsPage() {
               )}
             </div>
           </div>
+
+          {/* ── Document History ──────────────────────────────────────────── */}
+          {doc.metadata && <DocumentHistorySection meta={doc.metadata as DeepMeta} />}
 
           {/* ── Deep Forensic Layers ────────────────────────────────────── */}
           {doc.metadata && <DeepMetadata meta={doc.metadata as DeepMeta} />}
