@@ -48,6 +48,9 @@ export interface EmbeddedUrl {
 }
 
 export interface DocumentMetadata {
+  // ── File integrity ────────────────────────────────────────────────────────
+  sha256: string | null;
+
   // ── Basic Info Dictionary ──────────────────────────────────────────────────
   author: string | null;
   creator: string | null;

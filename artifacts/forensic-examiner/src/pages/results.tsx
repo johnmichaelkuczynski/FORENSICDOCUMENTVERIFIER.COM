@@ -260,6 +260,23 @@ async function downloadForensicReport(doc: DocData) {
     pdf.text('EXTRACTED PDF METADATA', MARGIN, y);
     y += 6;
 
+    const sha256Val = String(meta['sha256'] ?? '');
+    if (sha256Val) {
+      checkPage(20);
+      pdf.setFontSize(6);
+      pdf.setFont('helvetica', 'bold');
+      pdf.setTextColor(...COLORS.muted);
+      pdf.text('SHA-256 HASH', MARGIN, y);
+      y += 5;
+      pdf.setFillColor(...COLORS.card);
+      pdf.roundedRect(MARGIN, y, CONTENT_W, 9, 1, 1, 'F');
+      pdf.setFontSize(7);
+      pdf.setFont('helvetica', 'normal');
+      pdf.setTextColor(...COLORS.accent);
+      pdf.text(sha256Val, MARGIN + 3, y + 6);
+      y += 13;
+    }
+
     const metaFields: [string, string][] = [
       ['Author',        String(meta['author']           ?? 'N/A')],
       ['Creator',       String(meta['creator']          ?? 'N/A')],
@@ -319,6 +336,7 @@ interface XmpHistoryEntry { action: string | null; instanceId: string | null; wh
 interface EmbeddedUrl { url: string; context: string | null; }
 
 interface DeepMeta {
+  sha256?: string | null;
   author?: string | null; creator?: string | null; producer?: string | null;
   creationDate?: string | null; modificationDate?: string | null; pageCount?: number | null;
   fileSize?: number; pdfVersion?: string | null;
@@ -819,6 +837,7 @@ export default function ResultsPage() {
                         {((): [string, unknown][] => {
                           const m = doc.metadata as DeepMeta;
                           return [
+                            ['SHA-256',   m.sha256 ? <span className="text-[10px] font-mono text-primary/80 break-all select-all">{m.sha256}</span> : null],
                             ['Author',    m.author],
                             ['Creator',   m.creator],
                             ['Producer',  m.producer],

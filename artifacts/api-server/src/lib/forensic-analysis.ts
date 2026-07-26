@@ -1,6 +1,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
+import crypto from "crypto";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import pdfParse from "pdf-parse";
@@ -220,6 +221,8 @@ export async function extractPdfMetadata(
   filePath: string,
   fileSize: number
 ): Promise<{ metadata: DocumentMetadata; rawText: string }> {
+  const sha256 = crypto.createHash("sha256").update(buf).digest("hex");
+
   // Run all three extractors in parallel
   const [exifRaw, binary, pdfInfo] = await Promise.all([
     runExiftool(filePath),
@@ -246,6 +249,8 @@ export async function extractPdfMetadata(
     .map((f) => f.name);
 
   const metadata: DocumentMetadata = {
+    sha256,
+
     // Basic Info dictionary
     author:           exifVal(exifRaw, "PDF:Author", "XMP-dc:Creator") ?? (info["Author"] as string | null) ?? null,
     creator:          exifVal(exifRaw, "PDF:Creator", "XMP-xmp:CreatorTool") ?? (info["Creator"] as string | null) ?? null,
