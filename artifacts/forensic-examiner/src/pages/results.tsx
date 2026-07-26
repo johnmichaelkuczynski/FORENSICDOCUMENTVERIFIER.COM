@@ -978,6 +978,14 @@ export default function ResultsPage() {
   const reanalyzeMutation = useReanalyzeDocument();
   const deleteMutation = useDeleteDocument();
   const [isDownloading, setIsDownloading] = React.useState(false);
+  const [hashCopied, setHashCopied] = React.useState(false);
+
+  const handleCopyHash = (hash: string) => {
+    navigator.clipboard.writeText(hash).then(() => {
+      setHashCopied(true);
+      setTimeout(() => setHashCopied(false), 2000);
+    });
+  };
 
   const handleDownload = async () => {
     if (!doc) return;
@@ -1087,6 +1095,28 @@ export default function ResultsPage() {
           </Button>
         </div>
       </div>
+
+      {/* SHA-256 Identity Strip */}
+      {doc.status === 'complete' && (doc.metadata as DeepMeta)?.sha256 && (
+        <div className="flex items-center gap-4 bg-card border border-primary/20 rounded-xl px-5 py-3">
+          <div className="flex items-center gap-2 shrink-0">
+            <Fingerprint className="h-4 w-4 text-primary" />
+            <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest">SHA-256</span>
+          </div>
+          <span className="flex-1 font-mono text-[12px] text-primary/90 select-all break-all leading-relaxed">
+            {(doc.metadata as DeepMeta).sha256}
+          </span>
+          <button
+            onClick={() => handleCopyHash((doc.metadata as DeepMeta).sha256!)}
+            className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-mono uppercase tracking-wider border transition-all duration-150
+              border-primary/30 text-primary hover:bg-primary/10 active:scale-95"
+          >
+            {hashCopied
+              ? <><CheckCircle className="h-3 w-3" /> Copied</>
+              : <><Database className="h-3 w-3" /> Copy</>}
+          </button>
+        </div>
+      )}
 
       {isProcessing ? (
         <div className="bg-card border border-border rounded-xl p-16 flex flex-col items-center justify-center space-y-6">
