@@ -1050,8 +1050,44 @@ export default function ResultsPage() {
 
   const isProcessing = doc.status === 'pending' || doc.status === 'analyzing';
 
+  const sha256 = (doc.metadata as DeepMeta | null)?.sha256 ?? null;
+
   return (
     <div className="max-w-5xl mx-auto py-8 px-6 space-y-12 pb-24">
+
+      {/* ── SHA-256 Hash — very top ──────────────────────────────────────── */}
+      {doc.status === 'complete' && (
+        <div className={`flex items-center gap-4 rounded-xl px-5 py-3 border ${
+          sha256
+            ? 'bg-card border-primary/25'
+            : 'bg-card border-border/50'
+        }`}>
+          <div className="flex items-center gap-2 shrink-0">
+            <Fingerprint className="h-4 w-4 text-primary" />
+            <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest">SHA-256</span>
+          </div>
+          {sha256 ? (
+            <>
+              <span className="flex-1 font-mono text-[12px] text-primary/90 select-all break-all leading-relaxed">
+                {sha256}
+              </span>
+              <button
+                onClick={() => handleCopyHash(sha256)}
+                className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-mono uppercase tracking-wider border transition-all duration-150 border-primary/30 text-primary hover:bg-primary/10 active:scale-95"
+              >
+                {hashCopied
+                  ? <><CheckCircle className="h-3 w-3 mr-1" />Copied</>
+                  : <><Database className="h-3 w-3 mr-1" />Copy</>}
+              </button>
+            </>
+          ) : (
+            <span className="flex-1 font-mono text-[12px] text-muted-foreground/50 italic">
+              Hash not computed — hit Re-run to generate
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Header / Actions */}
       <div className="flex items-center justify-between">
         <Link href="/history" className="text-muted-foreground hover:text-foreground inline-flex items-center gap-2 text-sm font-medium transition-colors">
@@ -1095,28 +1131,6 @@ export default function ResultsPage() {
           </Button>
         </div>
       </div>
-
-      {/* SHA-256 Identity Strip */}
-      {doc.status === 'complete' && (doc.metadata as DeepMeta)?.sha256 && (
-        <div className="flex items-center gap-4 bg-card border border-primary/20 rounded-xl px-5 py-3">
-          <div className="flex items-center gap-2 shrink-0">
-            <Fingerprint className="h-4 w-4 text-primary" />
-            <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest">SHA-256</span>
-          </div>
-          <span className="flex-1 font-mono text-[12px] text-primary/90 select-all break-all leading-relaxed">
-            {(doc.metadata as DeepMeta).sha256}
-          </span>
-          <button
-            onClick={() => handleCopyHash((doc.metadata as DeepMeta).sha256!)}
-            className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-mono uppercase tracking-wider border transition-all duration-150
-              border-primary/30 text-primary hover:bg-primary/10 active:scale-95"
-          >
-            {hashCopied
-              ? <><CheckCircle className="h-3 w-3" /> Copied</>
-              : <><Database className="h-3 w-3" /> Copy</>}
-          </button>
-        </div>
-      )}
 
       {isProcessing ? (
         <div className="bg-card border border-border rounded-xl p-16 flex flex-col items-center justify-center space-y-6">
