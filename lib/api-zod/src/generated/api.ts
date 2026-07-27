@@ -46,7 +46,7 @@ export const ListDocumentsResponseItem = zod.object({
   "encrypted": zod.boolean().optional(),
   "hasDigitalSignature": zod.boolean().optional(),
   "pdfVersion": zod.string().nullish()
-}),zod.null()]).optional(),
+}).passthrough(),zod.null()]).optional(),
   "errorMessage": zod.string().nullish(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date().optional()
@@ -109,7 +109,7 @@ export const AnalyzeDocumentResponse = zod.object({
   "encrypted": zod.boolean().optional(),
   "hasDigitalSignature": zod.boolean().optional(),
   "pdfVersion": zod.string().nullish()
-}),zod.null()]).optional(),
+}).passthrough(),zod.null()]).optional(),
   "errorMessage": zod.string().nullish(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date().optional()
@@ -149,7 +149,7 @@ export const GetDocumentResponse = zod.object({
   "encrypted": zod.boolean().optional(),
   "hasDigitalSignature": zod.boolean().optional(),
   "pdfVersion": zod.string().nullish()
-}),zod.null()]).optional(),
+}).passthrough(),zod.null()]).optional(),
   "errorMessage": zod.string().nullish(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date().optional()
@@ -199,7 +199,7 @@ export const ReanalyzeDocumentResponse = zod.object({
   "encrypted": zod.boolean().optional(),
   "hasDigitalSignature": zod.boolean().optional(),
   "pdfVersion": zod.string().nullish()
-}),zod.null()]).optional(),
+}).passthrough(),zod.null()]).optional(),
   "errorMessage": zod.string().nullish(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date().optional()
