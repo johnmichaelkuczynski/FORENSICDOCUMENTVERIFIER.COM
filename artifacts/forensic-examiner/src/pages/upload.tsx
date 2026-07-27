@@ -62,15 +62,6 @@ export default function UploadPage() {
       });
       return;
     }
-    if (!claimedIdentity.trim()) {
-      toast({
-        title: 'Missing identity claim',
-        description: 'Please describe what this document claims to be.',
-        variant: 'destructive',
-      });
-      return;
-    }
-
     setIsUploading(true);
     try {
       const fd = new FormData();
@@ -113,18 +104,19 @@ export default function UploadPage() {
       <form onSubmit={handleSubmit} className="space-y-10">
         <div className="space-y-4">
           <Label htmlFor="claimedIdentity" className="text-sm font-mono text-muted-foreground uppercase tracking-wider">
-            Document Identity Claim
+            Document Identity Claim <span className="text-muted-foreground/50 normal-case font-sans font-normal">(optional)</span>
           </Label>
           <Input 
             id="claimedIdentity"
-            placeholder="e.g. A letter from First National Bank dated March 2022 certifying a $500k account balance"
+            placeholder="e.g. A letter from First National Bank dated March 2022 — leave blank to run exploration mode"
             value={claimedIdentity}
             onChange={(e) => setClaimedIdentity(e.target.value)}
             className="font-mono bg-card text-foreground border-border h-14 text-base focus-visible:ring-primary"
             data-testid="input-claimed-identity"
           />
           <p className="text-xs text-muted-foreground">
-            Describe the stated purpose and origin of the document. The analysis engine will compare the document's structure and metadata against this claim.
+            If provided, the engine compares all metadata against this claim to reach a forgery verdict. 
+            If left blank, the engine runs in <span className="text-primary font-medium">Exploration Mode</span> — cataloging creators, software, timestamps, and structural signals without judging against a specific claim.
           </p>
         </div>
 

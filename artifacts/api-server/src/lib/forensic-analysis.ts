@@ -594,9 +594,10 @@ export function buildHeuristicFindings(
   rawText: string
 ): Finding[] {
   const findings: Finding[] = [];
+  const hasClaim = claimedIdentity.trim().length > 0;
   const claimed = claimedIdentity.toLowerCase();
 
-  const isInstitutional = /bank|financial|government|federal|state|court|official|institution|authority|agency|legal|law|police|notary|hospital|insurance/.test(claimed);
+  const isInstitutional = hasClaim && /bank|financial|government|federal|state|court|official|institution|authority|agency|legal|law|police|notary|hospital|insurance/.test(claimed);
 
   // ── Software fingerprint ─────────────────────────────────────────────────
   const consumerApps = ["microsoft word", "libreoffice", "openoffice", "google docs", "wps office", "pages", "google slides", "keynote"];
@@ -614,9 +615,9 @@ export function buildHeuristicFindings(
   } else if (matchedApp && !isInstitutional) {
     findings.push({
       category: "software",
-      severity: "low",
-      title: `Document created with personal office software`,
-      description: `Created in "${m.xmpCreatorTool ?? m.creator}", a consumer office application. May be expected depending on the document's claimed source.`,
+      severity: "info",
+      title: `Document created with ${m.xmpCreatorTool ?? m.creator ?? "personal office software"}`,
+      description: `The authoring tool is identified as "${m.xmpCreatorTool ?? m.creator ?? m.producer}", a consumer office application.`,
     });
   }
 
@@ -627,41 +628,43 @@ export function buildHeuristicFindings(
       category: "structure",
       severity,
       title: `Document was modified ${m.incrementalSaveCount} time${m.incrementalSaveCount > 1 ? "s" : ""} after initial creation`,
-      description: `PDF files record every save as a separate "%%EOF" section appended to the end of the file. This document contains ${m.incrementalSaveCount + 1} body sections, meaning it was saved ${m.incrementalSaveCount} additional time${m.incrementalSaveCount > 1 ? "s" : ""} after its initial creation. This is a significant structural signal when the modification dates conflict with the claimed issuance date, or when the document claims to be a signed original.`,
+      description: `PDF files record every save as a separate "%%EOF" section appended to the end of the file. This document contains ${m.incrementalSaveCount + 1} body sections, meaning it was saved ${m.incrementalSaveCount} additional time${m.incrementalSaveCount > 1 ? "s" : ""} after its initial creation.${hasClaim ? " This is a significant structural signal when the modification dates conflict with the claimed issuance date, or when the document claims to be a signed original." : ""}`,
     });
   }
 
-  // ── Date conflicts ───────────────────────────────────────────────────────
-  const yearMatch = claimedIdentity.match(/\b(19|20)\d{2}\b/);
-  const metaDate = m.xmpCreateDate ?? m.creationDate;
-  if (yearMatch && metaDate) {
-    const claimedYear = parseInt(yearMatch[0]);
-    const metaYear = parseInt(metaDate.slice(0, 4));
-    if (Math.abs(claimedYear - metaYear) > 1) {
-      findings.push({
-        category: "timestamp",
-        severity: "high",
-        title: `Claimed date (${claimedYear}) conflicts with embedded creation date (${metaYear})`,
-        description: `The submitter claims this document is from ${claimedYear}, but the embedded XMP/PDF metadata shows a creation date of ${metaDate}. A discrepancy of ${Math.abs(claimedYear - metaYear)} year(s) between the claimed issuance date and the document's internal timestamps is a significant inconsistency that cannot be explained by timezone differences or file system copying. If the document were genuinely from ${claimedYear}, the metadata would reflect that — unless the metadata was intentionally altered.`,
-      });
+  // ── Date conflicts (only meaningful with a claim) ────────────────────────
+  if (hasClaim) {
+    const yearMatch = claimedIdentity.match(/\b(19|20)\d{2}\b/);
+    const metaDate = m.xmpCreateDate ?? m.creationDate;
+    if (yearMatch && metaDate) {
+      const claimedYear = parseInt(yearMatch[0]);
+      const metaYear = parseInt(metaDate.slice(0, 4));
+      if (Math.abs(claimedYear - metaYear) > 1) {
+        findings.push({
+          category: "timestamp",
+          severity: "high",
+          title: `Claimed date (${claimedYear}) conflicts with embedded creation date (${metaYear})`,
+          description: `The submitter claims this document is from ${claimedYear}, but the embedded XMP/PDF metadata shows a creation date of ${metaDate}. A discrepancy of ${Math.abs(claimedYear - metaYear)} year(s) between the claimed issuance date and the document's internal timestamps is a significant inconsistency that cannot be explained by timezone differences or file system copying.`,
+        });
+      }
     }
   }
 
   // ── XMP ≠ Info dictionary date conflict ─────────────────────────────────
   if (m.xmpCreateDate && m.creationDate) {
-    const xmpYear = m.xmpCreateDate.slice(0, 10);
-    const infoYear = m.creationDate.slice(0, 10);
-    if (xmpYear !== infoYear) {
+    const xmpDay = m.xmpCreateDate.slice(0, 10);
+    const infoDay = m.creationDate.slice(0, 10);
+    if (xmpDay !== infoDay) {
       findings.push({
         category: "timestamp",
         severity: "medium",
         title: `XMP creation date differs from PDF Info dictionary creation date`,
-        description: `The document contains two independent date records that disagree: the XMP metadata says "${m.xmpCreateDate}" while the PDF Info dictionary says "${m.creationDate}". Legitimate PDF generators write both timestamps in lockstep. This discrepancy suggests the PDF Info dictionary was manually edited after the document was created — a common technique in document tampering.`,
+        description: `The document contains two independent date records that disagree: the XMP metadata says "${m.xmpCreateDate}" while the PDF Info dictionary says "${m.creationDate}". Legitimate PDF generators write both timestamps in lockstep. This discrepancy suggests the PDF Info dictionary was manually edited after the document was created.`,
       });
     }
   }
 
-  // ── Personal name as author in institutional document ─────────────────
+  // ── Personal name as author in institutional document (claim-dependent) ──
   if (m.author && isInstitutional) {
     const isPersonalName = /^[A-Z][a-z]+ [A-Z][a-z]+$/.test(m.author.trim());
     if (isPersonalName) {
@@ -669,7 +672,7 @@ export function buildHeuristicFindings(
         category: "metadata",
         severity: "high",
         title: `Personal name in Author field for an institutional document`,
-        description: `The Author metadata field contains "${m.author}", which appears to be an individual's personal name. Official institutional documents authored through enterprise systems carry the organization name or department in the Author field — not a personal name embedded in the PDF properties. This pattern is consistent with a document created on a personal computer by an individual, not produced by an institutional system.`,
+        description: `The Author metadata field contains "${m.author}", which appears to be an individual's personal name. Official institutional documents authored through enterprise systems carry the organization name or department in the Author field.`,
       });
     }
   }
@@ -680,7 +683,7 @@ export function buildHeuristicFindings(
       category: "structure",
       severity: "critical",
       title: `Embedded JavaScript detected`,
-      description: `The PDF contains one or more JavaScript (/JS) objects embedded in its structure. Legitimate institutional documents — letters, contracts, statements — have no reason to contain executable code. The presence of JavaScript is associated with PDF exploits, phishing, automated form manipulation, and anti-forensic techniques. This document should be treated as potentially malicious and analyzed in an isolated environment.`,
+      description: `The PDF contains one or more JavaScript (/JS) objects embedded in its structure. Legitimate documents have no reason to contain executable code. The presence of JavaScript is associated with PDF exploits, phishing, automated form manipulation, and anti-forensic techniques.`,
     });
   }
 
@@ -690,17 +693,24 @@ export function buildHeuristicFindings(
       category: "structure",
       severity: "critical",
       title: `Launch actions detected — potential malicious payload`,
-      description: `The document contains a /Launch action that can execute external programs or open other files when the PDF is viewed. This is a well-known attack vector used in targeted phishing campaigns. No legitimate document from a bank or government agency embeds launch actions.`,
+      description: `The document contains a /Launch action that can execute external programs or open other files when the PDF is viewed. This is a well-known attack vector used in targeted phishing campaigns.`,
     });
   }
 
-  // ── Suspect fonts ─────────────────────────────────────────────────────────
+  // ── Suspect fonts (claim-dependent severity) ──────────────────────────────
   if (m.suspectFonts.length > 0 && isInstitutional) {
     findings.push({
       category: "content",
       severity: "medium",
       title: `Non-professional fonts detected in institutional document`,
-      description: `The following fonts are embedded in the document: ${m.suspectFonts.join(", ")}. These are informal, decorative, or novelty fonts not used in professional institutional documents. Their presence suggests the document was not produced by an organization's official document system.`,
+      description: `The following fonts are embedded: ${m.suspectFonts.join(", ")}. These informal fonts are not typically used in professionally produced institutional documents.`,
+    });
+  } else if (m.suspectFonts.length > 0) {
+    findings.push({
+      category: "content",
+      severity: "info",
+      title: `Informal fonts detected: ${m.suspectFonts.slice(0, 3).join(", ")}`,
+      description: `The document uses these informal or decorative fonts: ${m.suspectFonts.join(", ")}.`,
     });
   }
 
@@ -710,7 +720,7 @@ export function buildHeuristicFindings(
       category: "structure",
       severity: "medium",
       title: `No font metadata despite extractable text`,
-      description: `The document contains readable text but no font objects in its structure. This can indicate the document was rendered from a scanner or image (reducing text reliability) or that the font metadata was stripped, which is uncommon in legitimately produced PDFs.`,
+      description: `The document contains readable text but no font objects in its structure. This can indicate the document was rendered from a scanner or image, or that font metadata was stripped.`,
     });
   }
 
@@ -720,7 +730,7 @@ export function buildHeuristicFindings(
       category: "structure",
       severity: "low",
       title: `No embedded font data`,
-      description: `The document uses ${m.fontCount} font(s) but none are embedded in the file. Proper institutional PDFs embed their fonts to ensure accurate rendering. Missing font embedding can cause display differences across systems and is less common in professionally produced documents.`,
+      description: `The document uses ${m.fontCount} font(s) but none are embedded. Proper institutional PDFs embed their fonts to ensure accurate rendering.`,
     });
   }
 
@@ -730,9 +740,9 @@ export function buildHeuristicFindings(
     if (agents.length > 1) {
       findings.push({
         category: "metadata",
-        severity: "medium",
-        title: `Document edited by multiple different applications`,
-        description: `The XMP edit history shows this document was worked on by ${agents.length} different applications: ${agents.slice(0, 5).join("; ")}. If this is claimed to be a freshly issued institutional document, it should have a single creation event from one system — not an edit trail from multiple tools.`,
+        severity: hasClaim ? "medium" : "info",
+        title: `Document edited by ${agents.length} different applications`,
+        description: `The XMP edit history shows this document was worked on by: ${agents.slice(0, 5).join("; ")}.`,
       });
     }
     const sessionCount = m.xmpHistory.length;
@@ -741,7 +751,7 @@ export function buildHeuristicFindings(
         category: "metadata",
         severity: "low",
         title: `${sessionCount} edit sessions recorded in XMP history`,
-        description: `The XMP metadata contains a history of ${sessionCount} documented save/edit operations. Freshly issued institutional documents typically have 1 creation event. Extensive editing history may indicate the document was iteratively modified, which warrants scrutiny when the document is claimed to be an original.`,
+        description: `The XMP metadata contains a history of ${sessionCount} documented save/edit operations.`,
       });
     }
   }
@@ -752,7 +762,7 @@ export function buildHeuristicFindings(
       category: "metadata",
       severity: "info",
       title: `DocumentID and InstanceID are identical`,
-      description: `In the XMP metadata model, DocumentID is a permanent GUID assigned at document creation and InstanceID is updated on every save. When they are identical it typically means the document was created and never re-saved through a proper XMP-aware application — consistent with a first-time save, but unusual if the document has been through multiple edits.`,
+      description: `In the XMP metadata model, DocumentID is a permanent GUID assigned at document creation and InstanceID is updated on every save. When they are identical it typically means the document was created and never re-saved through a proper XMP-aware application.`,
     });
   }
 
@@ -762,7 +772,7 @@ export function buildHeuristicFindings(
       category: "structure",
       severity: "medium",
       title: `Embedded file attachments detected`,
-      description: `The PDF contains one or more embedded file attachments (/EmbeddedFile objects). While legitimate in some workflows (e.g., XML invoice payloads), embedded files in documents purporting to be simple letters or statements are unusual and should be extracted and examined separately.`,
+      description: `The PDF contains one or more embedded file attachments (/EmbeddedFile objects). These should be extracted and examined separately.`,
     });
   }
 
@@ -773,7 +783,7 @@ export function buildHeuristicFindings(
       category: "structure",
       severity: "low",
       title: `${m.embeddedUrls.length} embedded URL${m.embeddedUrls.length > 1 ? "s" : ""} found`,
-      description: `The document contains embedded hyperlinks: ${urls}${m.embeddedUrls.length > 5 ? ` (+${m.embeddedUrls.length - 5} more)` : ""}. These URLs may be used to track document opens, redirect to phishing sites, or load external content. Each URL should be verified against the claimed institution's official domains.`,
+      description: `The document contains embedded hyperlinks: ${urls}${m.embeddedUrls.length > 5 ? ` (+${m.embeddedUrls.length - 5} more)` : ""}.`,
     });
   }
 
@@ -785,7 +795,7 @@ export function buildHeuristicFindings(
       category: "content",
       severity: "critical",
       title: `Unresolved template placeholder text detected`,
-      description: `The document text contains unfilled template markers: ${foundTemplate.map((p) => `"${p}"`).join(", ")}. This conclusively indicates the document was not finalized — it was submitted directly from a document template with placeholder text left intact, a strong indicator of fabrication.`,
+      description: `The document text contains unfilled template markers: ${foundTemplate.map((p) => `"${p}"`).join(", ")}. This conclusively indicates the document was not finalized — it was submitted directly from a document template with placeholder text left intact.`,
     });
   }
 
@@ -962,6 +972,196 @@ Verdict guide:
   };
 }
 
+// ─── Exploration-mode AI analysis (no claim) ─────────────────────────────────
+
+async function runExplorationAnalysis(
+  m: DocumentMetadata,
+  rawText: string,
+  heuristicFindings: Finding[]
+): Promise<{ aiFindings: Finding[]; summary: string; verdict: AnalysisResult["verdict"]; confidence: number }> {
+  const hSum = heuristicFindings.length > 0
+    ? heuristicFindings.map((f) => `[${f.severity.toUpperCase()}] ${f.category}: ${f.title}`).join("\n")
+    : "(none)";
+
+  const fontList = m.fonts.slice(0, 20).map((f) =>
+    `${f.name} (${f.type ?? "?"}, ${f.embedded ? "embedded" : "not embedded"})`
+  ).join("; ");
+
+  const historyList = m.xmpHistory.slice(0, 8).map((h) =>
+    `[${h.when ?? "?"}] ${h.action ?? "?"} by ${h.softwareAgent ?? "?"}`
+  ).join("\n");
+
+  const prompt = `You are a forensic document examiner with FBI-level PDF analysis training. No identity claim was provided for this document. Run in EXPLORATION MODE: your goal is to extract maximum intelligence from the metadata and content — describe everything the document reveals about itself.
+
+═══ PDF INFO DICTIONARY ═══
+Author: ${m.author ?? "None"}
+Creator: ${m.creator ?? "None"}
+Producer: ${m.producer ?? "None"}
+Creation Date: ${m.creationDate ?? "Unknown"}
+Modification Date: ${m.modificationDate ?? "Unknown"}
+PDF Version: ${m.pdfVersion ?? "Unknown"}
+Page Count: ${m.pageCount ?? "Unknown"}
+File Size: ${m.fileSize ? `${(m.fileSize / 1024).toFixed(1)} KB` : "Unknown"}
+
+═══ XMP METADATA ═══
+XMP Creator Tool: ${m.xmpCreatorTool ?? "None"}
+XMP Create Date: ${m.xmpCreateDate ?? "None"}
+XMP Modify Date: ${m.xmpModifyDate ?? "None"}
+Title: ${m.title ?? "None"}
+Subject: ${m.subject ?? "None"}
+Keywords: ${m.keywords ?? "None"}
+Language: ${m.language ?? "None"}
+Document GUID: ${m.documentId ?? "None"}
+Instance ID: ${m.instanceId ?? "None"}
+
+═══ FONT ANALYSIS ═══
+Total fonts: ${m.fontCount}  |  Embedded: ${m.embeddedFontCount}
+Font list: ${fontList || "None"}
+
+═══ XMP EDIT HISTORY ═══
+${historyList || "(No XMP history)"}
+
+═══ STRUCTURE ═══
+Incremental saves: ${m.incrementalSaveCount}
+JavaScript: ${m.hasJavaScript}  |  Signatures: ${m.signatureCount}  |  Linearized: ${m.linearized}
+Encrypted: ${m.encrypted}  |  Embedded files: ${m.hasEmbeddedFiles}
+Page size: ${m.pageSize ?? "Unknown"}  |  Page layout: ${m.pageLayout ?? "Unknown"}
+
+═══ ALREADY DETECTED (rule-based) ═══
+${hSum}
+
+═══ DOCUMENT TEXT (first 3000 chars) ═══
+${rawText.slice(0, 3000) || "(No extractable text)"}
+
+EXPLORATION INSTRUCTIONS:
+1. Describe what this document appears to be based on all available evidence. What type of document is it? What is its probable purpose?
+2. Identify every creator, author, and tool that touched this document and what role they appear to have played.
+3. Reconstruct the document's probable timeline: when was it created, who edited it, in what sequence?
+4. Note any structural anomalies, inconsistencies, or unusual characteristics — even if their significance is uncertain without a claim.
+5. If there are multiple pages, note any evidence of different authorship per page (different fonts, tools, or XMP sessions).
+6. Do NOT assign a forgery verdict. The verdict must be "inconclusive". The summary should be an intelligence report, not a judgment.
+7. Do NOT repeat findings from the rule-based section unless you have significant additional detail to add.
+
+Return ONLY valid JSON (no markdown fences):
+{
+  "verdict": "inconclusive",
+  "confidence": 0,
+  "summary": "<three to five sentences — an intelligence briefing about what this document is, who created it, and any notable characteristics. Written for a forensic analyst, not a jury.>",
+  "additionalFindings": [
+    {
+      "category": "metadata|software|timestamp|content|language|structure|signature",
+      "severity": "info|low|medium|high|critical",
+      "title": "<concise title>",
+      "description": "<specific observation citing exact field names and values>"
+    }
+  ]
+}`;
+
+  const response = await openai.chat.completions.create({
+    model: "gpt-5.6-terra",
+    max_completion_tokens: 3000,
+    messages: [{ role: "user", content: prompt }],
+  });
+
+  const raw = response.choices[0]?.message?.content ?? "{}";
+  let parsed: { verdict?: string; confidence?: number; summary?: string; additionalFindings?: Finding[] } = {};
+  try {
+    const clean = raw.replace(/^```json\s*/i, "").replace(/```\s*$/i, "").trim();
+    parsed = JSON.parse(clean);
+  } catch {
+    logger.warn({ raw }, "Failed to parse exploration AI response JSON");
+  }
+
+  return {
+    verdict: "inconclusive",
+    confidence: 0,
+    summary: parsed.summary ?? "Exploration complete. See findings for detailed observations.",
+    aiFindings: Array.isArray(parsed.additionalFindings) ? parsed.additionalFindings : [],
+  };
+}
+
+// ─── Document Q&A ─────────────────────────────────────────────────────────────
+
+export async function chatWithDocument(
+  filePath: string,
+  metadata: DocumentMetadata,
+  claimedIdentity: string,
+  question: string,
+  history: { role: "user" | "assistant"; content: string }[]
+): Promise<string> {
+  // Re-extract text from file (file is kept permanently)
+  let rawText = (metadata as DocumentMetadata & { rawText?: string }).rawText ?? "";
+  if (!rawText && filePath && fs.existsSync(filePath)) {
+    try {
+      const buf = fs.readFileSync(filePath);
+      const parsed = await pdfParse(buf).catch(() => null);
+      rawText = parsed?.text ?? "";
+    } catch { /* ignore */ }
+  }
+
+  const metaSummary = JSON.stringify({
+    author: metadata.author,
+    creator: metadata.creator,
+    producer: metadata.producer,
+    xmpCreatorTool: metadata.xmpCreatorTool,
+    creationDate: metadata.creationDate,
+    modificationDate: metadata.modificationDate,
+    xmpCreateDate: metadata.xmpCreateDate,
+    xmpModifyDate: metadata.xmpModifyDate,
+    pageCount: metadata.pageCount,
+    pdfVersion: metadata.pdfVersion,
+    title: metadata.title,
+    subject: metadata.subject,
+    keywords: metadata.keywords,
+    author2: metadata.author,
+    fontCount: metadata.fontCount,
+    embeddedFontCount: metadata.embeddedFontCount,
+    fonts: metadata.fonts?.slice(0, 15).map(f => f.name),
+    incrementalSaveCount: metadata.incrementalSaveCount,
+    hasDigitalSignature: metadata.hasDigitalSignature,
+    signatureCount: metadata.signatureCount,
+    hasJavaScript: metadata.hasJavaScript,
+    encrypted: metadata.encrypted,
+    isMergedDocument: metadata.isMergedDocument,
+    mergedComponents: metadata.mergedComponents,
+    xmpHistory: metadata.xmpHistory?.slice(0, 8),
+    sha256: metadata.sha256,
+    documentId: metadata.documentId,
+    instanceId: metadata.instanceId,
+    embeddedUrls: metadata.embeddedUrls?.slice(0, 10),
+    originType: metadata.originType,
+    originApp: metadata.originApp,
+    softwareChain: metadata.softwareChain,
+  }, null, 2);
+
+  const systemPrompt = `You are a forensic document analyst with deep expertise in PDF forensics, metadata analysis, and document authentication. You have full access to the forensic data extracted from a PDF document.
+
+DOCUMENT FILE NAME: ${metadata.fileSize ? `(${(metadata.fileSize / 1024).toFixed(1)} KB)` : ""}
+CLAIMED IDENTITY: ${claimedIdentity || "(none — exploration mode)"}
+
+EXTRACTED METADATA:
+${metaSummary}
+
+DOCUMENT TEXT (first 6000 chars):
+${rawText.slice(0, 6000) || "(No extractable text)"}
+
+Answer the user's questions about this document based ONLY on the data above. Be specific and cite exact field names and values. If asked about a specific page, use the document text to identify page content where possible. If you cannot determine something from the available data, say so clearly rather than guessing.`;
+
+  const messages: { role: "user" | "assistant" | "system"; content: string }[] = [
+    { role: "system", content: systemPrompt },
+    ...history.slice(-10).map(h => ({ role: h.role as "user" | "assistant", content: h.content })),
+    { role: "user", content: question },
+  ];
+
+  const response = await openai.chat.completions.create({
+    model: "gpt-5.6-terra",
+    max_completion_tokens: 1500,
+    messages,
+  });
+
+  return response.choices[0]?.message?.content ?? "I was unable to generate a response. Please try again.";
+}
+
 // ─── Orchestrator ─────────────────────────────────────────────────────────────
 
 export async function analyzeDocument(
@@ -972,8 +1172,16 @@ export async function analyzeDocument(
 ): Promise<AnalysisResult> {
   const buf = fs.readFileSync(filePath);
   const { metadata, rawText } = await extractPdfMetadata(buf, filePath, fileSize);
+
+  // Store rawText in metadata for future chat queries (capped at 50k chars)
+  (metadata as DocumentMetadata & { rawText: string }).rawText = rawText.slice(0, 50000);
+
   const heuristicFindings = buildHeuristicFindings(metadata, claimedIdentity, rawText);
-  const { verdict, confidence, summary, aiFindings } = await runAiAnalysis(metadata, claimedIdentity, rawText, heuristicFindings);
+
+  const hasClaim = claimedIdentity.trim().length > 0;
+  const { verdict, confidence, summary, aiFindings } = hasClaim
+    ? await runAiAnalysis(metadata, claimedIdentity, rawText, heuristicFindings)
+    : await runExplorationAnalysis(metadata, rawText, heuristicFindings);
 
   const allFindings: Finding[] = [...heuristicFindings];
   for (const af of aiFindings) {

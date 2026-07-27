@@ -8,7 +8,7 @@ import {
   AlertTriangle, Download, ChevronDown, ChevronRight, Shield, Code2,
   Type, Link2, Clock, Database, AlertOctagon, CheckCircle, XCircle, Minus,
   Globe, Printer, Monitor, Cloud, Layers, GitMerge, Network, History,
-  ScanLine, ExternalLink
+  ScanLine, ExternalLink, MessageSquare, Send, Bot, User as UserIcon
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { format } from 'date-fns';
@@ -980,6 +980,37 @@ export default function ResultsPage() {
   const [isDownloading, setIsDownloading] = React.useState(false);
   const [hashCopied, setHashCopied] = React.useState(false);
 
+  // ── Chat state ────────────────────────────────────────────────────────────
+  type ChatMsg = { role: 'user' | 'assistant'; content: string };
+  const [chatMessages, setChatMessages] = React.useState<ChatMsg[]>([]);
+  const [chatInput, setChatInput] = React.useState('');
+  const [chatLoading, setChatLoading] = React.useState(false);
+  const chatBottomRef = React.useRef<HTMLDivElement>(null);
+  const chatInputRef = React.useRef<HTMLTextAreaElement>(null);
+
+  const sendChat = async () => {
+    if (!chatInput.trim() || chatLoading || !docId) return;
+    const question = chatInput.trim();
+    setChatInput('');
+    const newHistory: ChatMsg[] = [...chatMessages, { role: 'user', content: question }];
+    setChatMessages(newHistory);
+    setChatLoading(true);
+    try {
+      const resp = await fetch(`/api/documents/${docId}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question, history: chatMessages }),
+      });
+      const data = await resp.json();
+      setChatMessages([...newHistory, { role: 'assistant', content: data.answer ?? 'No response received.' }]);
+    } catch {
+      setChatMessages([...newHistory, { role: 'assistant', content: 'Failed to get a response. Please try again.' }]);
+    } finally {
+      setChatLoading(false);
+      setTimeout(() => chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+    }
+  };
+
   const handleCopyHash = (hash: string) => {
     navigator.clipboard.writeText(hash).then(() => {
       setHashCopied(true);
@@ -1047,7 +1078,7 @@ export default function ResultsPage() {
   }
 
   const isProcessing = doc.status === 'pending' || doc.status === 'analyzing';
-
+  const isExplorationMode = !doc.claimedIdentity?.trim();
   const sha256 = (doc.metadata as DeepMeta | null)?.sha256 ?? null;
 
   return (
@@ -1153,29 +1184,43 @@ export default function ResultsPage() {
         </div>
       ) : (
         <div className="space-y-12">
-          {/* Verdict Block */}
+          {/* Verdict / Exploration Block */}
           <div className="relative overflow-hidden rounded-xl border border-border bg-card p-1">
             <div className={`absolute inset-0 opacity-[0.03] ${
+              isExplorationMode ? 'bg-primary' :
               doc.verdict === 'authentic' ? 'bg-authentic' :
               doc.verdict === 'likely_forged' ? 'bg-forged' :
               doc.verdict === 'suspicious' ? 'bg-suspicious' : 'bg-foreground'
             }`} />
             
             <div className="relative p-10 text-center flex flex-col items-center">
-              <span className="font-mono text-xs uppercase tracking-widest text-muted-foreground mb-4">Official Verdict</span>
-              
-              <div className="mb-6">
-                <VerdictBadge verdict={doc.verdict} className="px-6 py-2 text-xl font-bold font-serif tracking-widest" />
-              </div>
-
-              <div className="flex items-center gap-12 mt-4 text-center">
-                <div className="flex flex-col items-center">
-                  <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest mb-1">Confidence Score</span>
-                  <div className="text-4xl font-light font-mono text-foreground flex items-baseline">
-                    {doc.confidenceScore}<span className="text-lg text-muted-foreground ml-1">%</span>
+              {isExplorationMode ? (
+                <>
+                  <span className="font-mono text-xs uppercase tracking-widest text-muted-foreground mb-4">Analysis Mode</span>
+                  <div className="mb-6 flex items-center gap-2 px-6 py-2 rounded-lg border border-primary/40 bg-primary/10">
+                    <ScanLine className="h-5 w-5 text-primary" />
+                    <span className="text-xl font-bold font-serif tracking-widest text-primary uppercase">Exploration Mode</span>
                   </div>
-                </div>
-              </div>
+                  <p className="text-sm text-muted-foreground font-mono max-w-lg">
+                    No identity claim provided. The engine has cataloged all metadata, software, and structural signals without judging against a specific claim.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <span className="font-mono text-xs uppercase tracking-widest text-muted-foreground mb-4">Official Verdict</span>
+                  <div className="mb-6">
+                    <VerdictBadge verdict={doc.verdict} className="px-6 py-2 text-xl font-bold font-serif tracking-widest" />
+                  </div>
+                  <div className="flex items-center gap-12 mt-4 text-center">
+                    <div className="flex flex-col items-center">
+                      <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest mb-1">Confidence Score</span>
+                      <div className="text-4xl font-light font-mono text-foreground flex items-baseline">
+                        {doc.confidenceScore}<span className="text-lg text-muted-foreground ml-1">%</span>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
 
               {doc.summary && (
                 <div className="mt-10 max-w-2xl text-lg text-foreground font-serif leading-relaxed border-t border-border/50 pt-8">
@@ -1207,8 +1252,13 @@ export default function ResultsPage() {
                 
                 <div className="bg-card border border-border rounded-lg p-5 space-y-4">
                   <div>
-                    <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest block mb-1">Claimed Identity</span>
-                    <p className="text-sm text-foreground">{doc.claimedIdentity}</p>
+                    <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest block mb-1">
+                      {doc.claimedIdentity?.trim() ? 'Claimed Identity' : 'Analysis Mode'}
+                    </span>
+                    {doc.claimedIdentity?.trim()
+                      ? <p className="text-sm text-foreground">{doc.claimedIdentity}</p>
+                      : <p className="text-sm text-primary font-mono">Exploration Mode — no claim provided</p>
+                    }
                   </div>
                   <div className="grid grid-cols-2 gap-4 pt-4 border-t border-border/50">
                     <div>
@@ -1232,10 +1282,9 @@ export default function ResultsPage() {
                   <div className="bg-card border border-border rounded-lg overflow-hidden text-sm">
                     <table className="w-full text-left font-mono">
                       <tbody className="divide-y divide-border/50">
-                        {((): [string, unknown][] => {
+                        {((): [string, string | number | null | undefined][] => {
                           const m = doc.metadata as DeepMeta;
                           return [
-                            ['SHA-256',   m.sha256 ? <span className="text-[10px] font-mono text-primary/80 break-all select-all">{m.sha256}</span> : null],
                             ['Author',    m.author],
                             ['Creator',   m.creator],
                             ['Producer',  m.producer],
@@ -1249,7 +1298,7 @@ export default function ResultsPage() {
                         })().map(([key, value]) => (
                           <tr key={key} className="hover:bg-secondary/10">
                             <td className="py-2 px-4 text-muted-foreground w-[40%] text-[11px]">{key}</td>
-                            <td className="py-2 px-4 text-foreground truncate max-w-[140px] text-[11px]" title={String(value ?? 'N/A')}>
+                            <td className="py-2 px-4 text-foreground truncate max-w-[140px] text-[11px]" title={String(value ?? '—')}>
                               {value != null && value !== '' ? String(value) : <span className="text-muted-foreground/40 italic">—</span>}
                             </td>
                           </tr>
@@ -1267,6 +1316,95 @@ export default function ResultsPage() {
 
           {/* ── Deep Forensic Layers ────────────────────────────────────── */}
           {doc.metadata && <DeepMetadata meta={doc.metadata as DeepMeta} />}
+
+          {/* ── Document Q&A ─────────────────────────────────────────────── */}
+          <div className="rounded-xl border border-border bg-card overflow-hidden">
+            <div className="flex items-center gap-3 px-6 py-4 border-b border-border bg-card">
+              <MessageSquare className="h-5 w-5 text-primary" />
+              <h3 className="text-xl font-serif text-foreground">Query This Document</h3>
+              <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest ml-auto">AI Deep Dive</span>
+            </div>
+
+            {/* Message history */}
+            {chatMessages.length > 0 && (
+              <div className="px-6 py-4 space-y-4 max-h-[520px] overflow-y-auto border-b border-border">
+                {chatMessages.map((msg, i) => (
+                  <div key={i} className={`flex gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    {msg.role === 'assistant' && (
+                      <div className="shrink-0 h-7 w-7 rounded-full bg-primary/20 flex items-center justify-center mt-0.5">
+                        <Bot className="h-3.5 w-3.5 text-primary" />
+                      </div>
+                    )}
+                    <div className={`max-w-[80%] rounded-xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap ${
+                      msg.role === 'user'
+                        ? 'bg-primary/15 text-foreground border border-primary/20'
+                        : 'bg-secondary/30 text-foreground border border-border/50'
+                    }`}>
+                      {msg.content}
+                    </div>
+                    {msg.role === 'user' && (
+                      <div className="shrink-0 h-7 w-7 rounded-full bg-secondary flex items-center justify-center mt-0.5">
+                        <UserIcon className="h-3.5 w-3.5 text-muted-foreground" />
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {chatLoading && (
+                  <div className="flex gap-3 justify-start">
+                    <div className="shrink-0 h-7 w-7 rounded-full bg-primary/20 flex items-center justify-center">
+                      <Bot className="h-3.5 w-3.5 text-primary" />
+                    </div>
+                    <div className="bg-secondary/30 border border-border/50 rounded-xl px-4 py-3 flex items-center gap-2">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                      <span className="text-sm text-muted-foreground font-mono">Analyzing…</span>
+                    </div>
+                  </div>
+                )}
+                <div ref={chatBottomRef} />
+              </div>
+            )}
+
+            {/* Input */}
+            <div className="px-6 py-4">
+              {chatMessages.length === 0 && (
+                <div className="mb-4 flex flex-wrap gap-2">
+                  {[
+                    'Who created this document and with what software?',
+                    'What does page 1 contain?',
+                    'Is there any evidence of tampering?',
+                    'Summarize the document timeline',
+                  ].map(suggestion => (
+                    <button
+                      key={suggestion}
+                      onClick={() => { setChatInput(suggestion); chatInputRef.current?.focus(); }}
+                      className="text-[11px] font-mono px-3 py-1.5 rounded-lg border border-border/60 text-muted-foreground hover:border-primary/40 hover:text-primary transition-colors"
+                    >
+                      {suggestion}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="flex gap-3 items-end">
+                <textarea
+                  ref={chatInputRef}
+                  value={chatInput}
+                  onChange={e => setChatInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); } }}
+                  placeholder="Ask anything about this document — specific pages, metadata, authorship, timeline…"
+                  rows={2}
+                  className="flex-1 resize-none rounded-lg bg-background border border-border px-4 py-3 text-sm font-mono text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50 transition-colors"
+                />
+                <button
+                  onClick={sendChat}
+                  disabled={chatLoading || !chatInput.trim()}
+                  className="shrink-0 h-10 w-10 rounded-lg bg-primary text-primary-foreground flex items-center justify-center hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                >
+                  {chatLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                </button>
+              </div>
+              <p className="text-[10px] text-muted-foreground/50 font-mono mt-2">Enter to send · Shift+Enter for newline</p>
+            </div>
+          </div>
         </div>
       )}
     </div>

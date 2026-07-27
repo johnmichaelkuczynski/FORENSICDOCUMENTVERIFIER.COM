@@ -68,6 +68,7 @@ export interface MergedComponent {
 }
 
 export interface DocumentMetadata {
+  rawText?: string | null;
   // ── File integrity ────────────────────────────────────────────────────────
   sha256: string | null;
 

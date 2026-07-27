@@ -16,7 +16,7 @@ import {
   AnalyzeDocumentResponse,
   ReanalyzeDocumentResponse,
 } from "@workspace/api-zod";
-import { analyzeDocument } from "../../lib/forensic-analysis";
+import { analyzeDocument, chatWithDocument } from "../../lib/forensic-analysis";
 import { logger } from "../../lib/logger";
 
 const router: IRouter = Router();
@@ -153,11 +153,6 @@ router.post("/documents/analyze", upload.single("file"), async (req, res): Promi
   }
 
   const claimedIdentity = typeof req.body?.claimedIdentity === "string" ? req.body.claimedIdentity.trim() : "";
-  if (!claimedIdentity) {
-    fs.unlinkSync(req.file.path);
-    res.status(400).json({ error: "claimedIdentity is required — describe what this document claims to be" });
-    return;
-  }
 
   const [doc] = await db
     .insert(documentsTable)
@@ -266,6 +261,36 @@ router.post("/documents/:id/reanalyze", async (req, res): Promise<void> => {
 
   const [updated] = await db.select().from(documentsTable).where(eq(documentsTable.id, doc.id));
   res.status(202).json(ReanalyzeDocumentResponse.parse(toApiShape(updated)));
+});
+
+// POST /documents/:id/chat
+router.post("/documents/:id/chat", async (req, res): Promise<void> => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid document id" }); return; }
+
+  const question = typeof req.body?.question === "string" ? req.body.question.trim() : "";
+  if (!question) { res.status(400).json({ error: "question is required" }); return; }
+
+  const history: { role: "user" | "assistant"; content: string }[] =
+    Array.isArray(req.body?.history) ? req.body.history.slice(-10) : [];
+
+  const [doc] = await db.select().from(documentsTable).where(eq(documentsTable.id, id));
+  if (!doc) { res.status(404).json({ error: "Document not found" }); return; }
+  if (doc.status !== "complete") { res.status(422).json({ error: "Analysis must be complete before querying" }); return; }
+
+  try {
+    const answer = await chatWithDocument(
+      doc.filePath ?? "",
+      (doc.metadata ?? {}) as any,
+      doc.claimedIdentity,
+      question,
+      history,
+    );
+    res.json({ answer });
+  } catch (err) {
+    logger.error({ err, id }, "Chat query failed");
+    res.status(500).json({ error: "Failed to generate response" });
+  }
 });
 
 export default router;
