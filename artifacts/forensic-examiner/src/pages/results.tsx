@@ -1011,17 +1011,15 @@ export default function ResultsPage() {
 
   const handleDelete = () => {
     if (!docId) return;
-    if (confirm('Are you sure you want to permanently delete this analysis record?')) {
-      deleteMutation.mutate({ id: docId }, {
-        onSuccess: () => {
-          toast({
-            title: 'Record deleted',
-            description: 'The analysis record has been removed.',
-          });
-          setLocation('/history');
-        }
-      });
-    }
+    deleteMutation.mutate({ id: docId }, {
+      onSuccess: () => {
+        toast({
+          title: 'Record deleted',
+          description: 'The analysis record has been removed.',
+        });
+        setLocation('/history');
+      }
+    });
   };
 
   if (isLoading) {
