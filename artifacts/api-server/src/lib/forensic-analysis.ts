@@ -41,17 +41,31 @@ async function runExiftool(filePath: string): Promise<Record<string, unknown>> {
   }
 }
 
+function coerceToString(v: unknown): string | null {
+  if (v == null) return null;
+  // ExifTool -l wraps values as { val, desc }
+  if (typeof v === "object" && !Array.isArray(v) && v !== null && "val" in v) {
+    return coerceToString((v as { val: unknown }).val);
+  }
+  // XMP lang-alt objects e.g. { "lang": "x-default", "_": "..." } or { "x-default": "..." }
+  if (typeof v === "object" && !Array.isArray(v) && v !== null) {
+    const obj = v as Record<string, unknown>;
+    const candidate = obj["_"] ?? obj["x-default"] ?? obj["value"] ?? Object.values(obj)[0];
+    if (candidate != null && typeof candidate !== "object") return String(candidate).trim() || null;
+    return null;
+  }
+  // Arrays — take first element
+  if (Array.isArray(v)) {
+    return v.length > 0 ? coerceToString(v[0]) : null;
+  }
+  const s = String(v).trim();
+  return (s && s !== "0") || typeof v === "number" ? s : null;
+}
+
 function exifVal(raw: Record<string, unknown>, ...keys: string[]): string | null {
   for (const k of keys) {
-    // ExifTool -l wraps values as { val, desc } — try both
-    const v = raw[k];
-    if (v == null) continue;
-    if (typeof v === "object" && v !== null && "val" in v) {
-      const val = (v as { val: unknown }).val;
-      if (val != null && String(val).trim()) return String(val).trim();
-    }
-    const s = String(v).trim();
-    if (s && s !== "0" || typeof v === "number") return s;
+    const result = coerceToString(raw[k]);
+    if (result) return result;
   }
   return null;
 }
@@ -867,19 +881,43 @@ ${hSum}
 ═══ DOCUMENT TEXT (first 2500 chars) ═══
 ${rawText.slice(0, 2500) || "(No extractable text)"}
 
+━━━ CORE DIRECTIVE — READ CAREFULLY ━━━
+Your ONLY job is to determine whether this document IS what it CLAIMS to be.
+The verdict must answer ONE question: "Does the evidence support or contradict the claimed identity?"
+
+THE VERDICT IS NOT ABOUT:
+- Whether the document is professionally produced
+- Whether the content seems complete or well-written
+- Whether the document is inherently suspicious-looking
+- Whether you personally would trust this document
+
+THE VERDICT IS STRICTLY ABOUT:
+- Do the metadata fields (creator, producer, author, dates, tools) match what the claimant says?
+- Is there evidence of tampering, alteration, or misrepresentation relative to the claim?
+- Are there internal contradictions that make the claim implausible?
+
+EXAMPLES OF CORRECT REASONING:
+- Claim: "Letter from Bank of America" → Metadata shows Creator = "Microsoft Word 365, personal edition" → SUSPICIOUS (bank letters come from enterprise systems, not personal Word)
+- Claim: "DOC BY JMKUCZYNSKI" → Metadata shows Author = "JM Kuczynski", Creator = personal software → AUTHENTIC (metadata matches; personal software is expected for a personal document)
+- Claim: "Official court document 2020" → XMP CreateDate = 2024 → LIKELY_FORGED (date anachronism directly contradicts claim)
+- Claim: "Personal notes by John" → Random content, no institutional markers → AUTHENTIC (matches a personal document)
+
+DO NOT penalize a document for being simple, short, or having minimal content — those are irrelevant to whether it is what it claims to be.
+DO NOT penalize missing fonts, sparse text, or non-institutional styling when the claim itself is non-institutional.
+
 ANALYSIS INSTRUCTIONS:
-1. Cross-reference all metadata layers for internal consistency.
-2. Evaluate whether the XMP creator tool, producer, version, font set, and structural features are consistent with what the claimed institution would plausibly use.
-3. Look for anachronisms — software versions that postdate the claimed document date.
-4. Assess language, terminology, formatting, and content for consistency with genuine documents of this type.
+1. Identify what KIND of document the claim describes (personal, institutional, official, informal, etc.).
+2. Check whether the metadata author, creator, producer, and dates are consistent with that KIND of document from that CLAIMED ORIGIN.
+3. Flag any direct contradictions between the claim and the evidence.
+4. Look for anachronisms — software versions that postdate the claimed document date.
 5. Do NOT repeat findings already listed in the rule-based section. Only add NEW insights.
-6. Be specific: name the exact metadata field and value that raises concern.
+6. Be specific: name the exact metadata field and value that raises or clears concern.
 
 Return ONLY valid JSON (no markdown fences):
 {
   "verdict": "authentic" | "suspicious" | "likely_forged" | "inconclusive",
   "confidence": <0-100>,
-  "summary": "<two to three professional sentences suitable for submission to a court or attorney — cite specific metadata values>",
+  "summary": "<two to three professional sentences stating whether the evidence supports the claimed identity — cite specific metadata values and explain exactly why the verdict was reached>",
   "additionalFindings": [
     {
       "category": "metadata|software|timestamp|content|language|structure|signature",
@@ -890,7 +928,11 @@ Return ONLY valid JSON (no markdown fences):
   ]
 }
 
-Verdict guide: authentic=signals consistently align with claimed origin; suspicious=moderate red flags warranting further investigation; likely_forged=multiple strong independent indicators; inconclusive=insufficient data to determine.`;
+Verdict guide:
+  authentic      = metadata and structure are consistent with the claimed identity; no material contradictions
+  suspicious     = one or more findings directly contradict the claim, warranting further investigation
+  likely_forged  = multiple strong independent indicators directly contradict the claim
+  inconclusive   = insufficient metadata to evaluate the claim`;
 
   const response = await openai.chat.completions.create({
     model: "gpt-5.6-terra",

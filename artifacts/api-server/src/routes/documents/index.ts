@@ -21,9 +21,20 @@ import { logger } from "../../lib/logger";
 
 const router: IRouter = Router();
 
-// Multer config — store uploads temporarily in os.tmpdir()
+// Permanent upload directory — files are kept so re-analysis and hashing always work
+const UPLOAD_DIR = path.join(process.cwd(), "uploads");
+if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
+  filename: (_req, file, cb) => {
+    const unique = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    cb(null, `${unique}-${file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_")}`);
+  },
+});
+
 const upload = multer({
-  dest: os.tmpdir(),
+  storage,
   limits: { fileSize: 50 * 1024 * 1024 }, // 50 MB
   fileFilter(_req, file, cb) {
     if (file.mimetype === "application/pdf" || file.originalname.toLowerCase().endsWith(".pdf")) {
@@ -79,10 +90,8 @@ async function runAnalysis(docId: number, filePath: string, fileName: string, fi
       .update(documentsTable)
       .set({ status: "error", errorMessage: String(err) })
       .where(eq(documentsTable.id, docId));
-  } finally {
-    // Clean up temp file
-    try { fs.unlinkSync(filePath); } catch { /* ignore */ }
   }
+  // Files are kept permanently for re-analysis and SHA-256 re-computation
 }
 
 // GET /documents
