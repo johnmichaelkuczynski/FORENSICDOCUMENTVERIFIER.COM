@@ -137,8 +137,9 @@ async function downloadForensicReport(doc: DocData) {
   pdf.text('EVIDENCE RECORD', MARGIN, y);
   y += 5;
 
+  const reportSha256 = String((doc.metadata as Record<string, unknown> | null | undefined)?.['sha256'] ?? '');
   const metaRows: [string, string][] = [
-    ['Claimed Identity', doc.claimedIdentity ?? '—'],
+    ['Claimed Identity', doc.claimedIdentity?.trim() ? doc.claimedIdentity : 'Exploration Mode (no claim)'],
     ['Filename', doc.fileName ?? '—'],
     ['File Size', doc.fileSize ? `${(doc.fileSize / 1024).toFixed(1)} KB` : '—'],
     ['Analysis Date', doc.createdAt ? format(new Date(doc.createdAt), 'MMMM d, yyyy') : '—'],
@@ -156,6 +157,34 @@ async function downloadForensicReport(doc: DocData) {
     pdf.setFontSize(8);
     pdf.text(lines, MARGIN + 44, y);
     y += lines.length * 5 + 2;
+  }
+
+  // SHA-256 in Evidence Record — prominent highlighted box
+  if (reportSha256) {
+    checkPage(18);
+    y += 2;
+    pdf.setFontSize(7);
+    pdf.setFont('helvetica', 'bold');
+    pdf.setTextColor(...COLORS.muted);
+    pdf.text('SHA-256 DOCUMENT HASH', MARGIN, y);
+    y += 5;
+    pdf.setFillColor(...COLORS.card);
+    pdf.roundedRect(MARGIN, y, CONTENT_W, 10, 1.5, 1.5, 'F');
+    pdf.setDrawColor(...COLORS.accent);
+    pdf.setLineWidth(0.4);
+    pdf.roundedRect(MARGIN, y, CONTENT_W, 10, 1.5, 1.5, 'S');
+    pdf.setFontSize(6.5);
+    pdf.setFont('helvetica', 'normal');
+    pdf.setTextColor(...COLORS.accent);
+    // Split hash into two halves so it never overflows
+    const half = Math.ceil(reportSha256.length / 2);
+    const line1 = reportSha256.slice(0, half);
+    const line2 = reportSha256.slice(half);
+    pdf.text(line1 + (line2 ? '…' : ''), MARGIN + 3, y + 4.5);
+    if (line2) {
+      pdf.text('…' + line2, MARGIN + 3, y + 8.5);
+    }
+    y += line2 ? 18 : 14;
   }
 
   // ── Summary ─────────────────────────────────────────────────────────────────
@@ -262,22 +291,7 @@ async function downloadForensicReport(doc: DocData) {
     pdf.text('EXTRACTED PDF METADATA', MARGIN, y);
     y += 6;
 
-    const sha256Val = String(meta['sha256'] ?? '');
-    if (sha256Val) {
-      checkPage(20);
-      pdf.setFontSize(6);
-      pdf.setFont('helvetica', 'bold');
-      pdf.setTextColor(...COLORS.muted);
-      pdf.text('SHA-256 HASH', MARGIN, y);
-      y += 5;
-      pdf.setFillColor(...COLORS.card);
-      pdf.roundedRect(MARGIN, y, CONTENT_W, 9, 1, 1, 'F');
-      pdf.setFontSize(7);
-      pdf.setFont('helvetica', 'normal');
-      pdf.setTextColor(...COLORS.accent);
-      pdf.text(sha256Val, MARGIN + 3, y + 6);
-      y += 13;
-    }
+    // SHA-256 is already displayed in the Evidence Record at the top; skip duplicate here
 
     const metaFields: [string, string][] = [
       ['Author',        String(meta['author']           ?? 'N/A')],
