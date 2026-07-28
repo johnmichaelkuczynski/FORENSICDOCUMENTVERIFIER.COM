@@ -41,9 +41,10 @@ async function downloadForensicReport(doc: DocData) {
   };
 
   const verdictColor = (v: string | null | undefined): [number,number,number] => {
-    if (v === 'authentic')    return COLORS.authentic;
-    if (v === 'suspicious')   return COLORS.suspicious;
-    if (v === 'likely_forged') return COLORS.forged;
+    if (v === 'strong_match')  return COLORS.authentic;
+    if (v === 'partial_match') return [0, 180, 216];   // cyan/primary
+    if (v === 'weak_match')    return COLORS.suspicious;
+    if (v === 'inconsistent')  return COLORS.forged;
     return COLORS.inconc;
   };
 
@@ -112,21 +113,30 @@ async function downloadForensicReport(doc: DocData) {
   pdf.setLineWidth(0.6);
   pdf.roundedRect(MARGIN, y, CONTENT_W, bannerH, 3, 3, 'S');
 
-  const verdictLabel = (doc.verdict ?? 'INCONCLUSIVE').replace(/_/g, ' ').toUpperCase();
+  const verdictLabelMap: Record<string, string> = {
+    strong_match: 'STRONG MATCH',
+    partial_match: 'PARTIAL MATCH / NEEDS CORROBORATION',
+    weak_match: 'WEAK MATCH / INCONSISTENT WITH CLAIM',
+    inconsistent: 'CLEARLY INCONSISTENT WITH CLAIM',
+    inconclusive: 'INCONCLUSIVE',
+  };
+  const verdictLabel = verdictLabelMap[doc.verdict ?? ''] ?? 'INCONCLUSIVE';
   pdf.setFontSize(6);
   pdf.setFont('helvetica', 'bold');
   pdf.setTextColor(...COLORS.muted);
-  pdf.text('OFFICIAL VERDICT', MARGIN + CONTENT_W / 2, y + 8, { align: 'center' });
+  pdf.text('CLAIM MATCH VERDICT', MARGIN + CONTENT_W / 2, y + 8, { align: 'center' });
 
-  pdf.setFontSize(20);
+  // Use smaller font if label is long
+  const vFontSize = verdictLabel.length > 25 ? 13 : 20;
+  pdf.setFontSize(vFontSize);
   pdf.setFont('helvetica', 'bold');
   pdf.setTextColor(...verdictColor(doc.verdict));
-  pdf.text(verdictLabel, MARGIN + CONTENT_W / 2, y + 20, { align: 'center' });
+  pdf.text(verdictLabel, MARGIN + CONTENT_W / 2, y + 21, { align: 'center' });
 
   pdf.setFontSize(8);
   pdf.setFont('helvetica', 'normal');
   pdf.setTextColor(...COLORS.muted);
-  pdf.text(`Confidence Score: ${doc.confidenceScore ?? 0}%`, MARGIN + CONTENT_W / 2, y + 30, { align: 'center' });
+  pdf.text(`Match Score: ${doc.confidenceScore ?? 0}%`, MARGIN + CONTENT_W / 2, y + 32, { align: 'center' });
 
   y += bannerH + 10;
 
@@ -1202,9 +1212,10 @@ export default function ResultsPage() {
           <div className="relative overflow-hidden rounded-xl border border-border bg-card p-1">
             <div className={`absolute inset-0 opacity-[0.03] ${
               isExplorationMode ? 'bg-primary' :
-              doc.verdict === 'authentic' ? 'bg-authentic' :
-              doc.verdict === 'likely_forged' ? 'bg-forged' :
-              doc.verdict === 'suspicious' ? 'bg-suspicious' : 'bg-foreground'
+              doc.verdict === 'strong_match' ? 'bg-authentic' :
+              doc.verdict === 'partial_match' ? 'bg-primary' :
+              doc.verdict === 'weak_match' ? 'bg-suspicious' :
+              doc.verdict === 'inconsistent' ? 'bg-forged' : 'bg-foreground'
             }`} />
             
             <div className="relative p-10 text-center flex flex-col items-center">
@@ -1221,13 +1232,13 @@ export default function ResultsPage() {
                 </>
               ) : (
                 <>
-                  <span className="font-mono text-xs uppercase tracking-widest text-muted-foreground mb-4">Official Verdict</span>
+                  <span className="font-mono text-xs uppercase tracking-widest text-muted-foreground mb-4">Claim Match Verdict</span>
                   <div className="mb-6">
                     <VerdictBadge verdict={doc.verdict} className="px-6 py-2 text-xl font-bold font-serif tracking-widest" />
                   </div>
                   <div className="flex items-center gap-12 mt-4 text-center">
                     <div className="flex flex-col items-center">
-                      <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest mb-1">Confidence Score</span>
+                      <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest mb-1">Match Score</span>
                       <div className="text-4xl font-light font-mono text-foreground flex items-baseline">
                         {doc.confidenceScore}<span className="text-lg text-muted-foreground ml-1">%</span>
                       </div>

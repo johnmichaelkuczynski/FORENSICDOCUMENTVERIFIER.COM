@@ -45,15 +45,26 @@ const upload = multer({
   },
 });
 
+// Migrate legacy verdict values to new labels
+const VERDICT_MIGRATION: Record<string, string> = {
+  authentic:     "strong_match",
+  suspicious:    "weak_match",
+  likely_forged: "inconsistent",
+};
+
 // Helper: map DB row to API shape
 function toApiShape(doc: typeof documentsTable.$inferSelect) {
+  const rawVerdict = doc.verdict ?? null;
+  const verdict = rawVerdict
+    ? (VERDICT_MIGRATION[rawVerdict] ?? rawVerdict) as "strong_match" | "partial_match" | "weak_match" | "inconsistent" | "inconclusive"
+    : null;
   return {
     id: doc.id,
     status: doc.status as "pending" | "analyzing" | "complete" | "error",
     fileName: doc.fileName,
     fileSize: doc.fileSize,
     claimedIdentity: doc.claimedIdentity,
-    verdict: (doc.verdict ?? null) as "authentic" | "suspicious" | "likely_forged" | "inconclusive" | null,
+    verdict,
     confidenceScore: doc.confidenceScore ?? null,
     summary: doc.summary ?? null,
     findings: (doc.findings ?? []) as any[],
@@ -121,7 +132,7 @@ router.get("/documents/stats", async (_req, res): Promise<void> => {
     .from(documentsTable)
     .groupBy(documentsTable.status);
 
-  const byVerdict: Record<string, number> = { authentic: 0, suspicious: 0, likely_forged: 0, inconclusive: 0 };
+  const byVerdict: Record<string, number> = { strong_match: 0, partial_match: 0, weak_match: 0, inconsistent: 0, inconclusive: 0 };
   for (const row of verdictRows) {
     if (row.verdict && byVerdict[row.verdict] !== undefined) {
       byVerdict[row.verdict] = Number(row.cnt);

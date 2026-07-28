@@ -76,9 +76,10 @@ export type DocumentAnalysisVerdict = typeof DocumentAnalysisVerdict[keyof typeo
 
 
 export const DocumentAnalysisVerdict = {
-  authentic: 'authentic',
-  suspicious: 'suspicious',
-  likely_forged: 'likely_forged',
+  strong_match: 'strong_match',
+  partial_match: 'partial_match',
+  weak_match: 'weak_match',
+  inconsistent: 'inconsistent',
   inconclusive: 'inconclusive',
 } as const;
 
@@ -106,9 +107,10 @@ export interface DocumentAnalysis {
 }
 
 export type DocumentStatsByVerdict = {
-  authentic?: number;
-  suspicious?: number;
-  likely_forged?: number;
+  strong_match?: number;
+  partial_match?: number;
+  weak_match?: number;
+  inconsistent?: number;
   inconclusive?: number;
 };
 

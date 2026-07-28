@@ -1,5 +1,5 @@
 import React from 'react';
-import { ShieldCheck, AlertTriangle, ShieldAlert, HelpCircle } from 'lucide-react';
+import { ShieldCheck, ShieldMinus, AlertTriangle, ShieldAlert, HelpCircle } from 'lucide-react';
 import { DocumentAnalysisVerdict } from '@workspace/api-client-react';
 
 interface VerdictBadgeProps {
@@ -11,25 +11,32 @@ export function VerdictBadge({ verdict, className = '' }: VerdictBadgeProps) {
   if (!verdict) return null;
 
   switch (verdict) {
-    case 'authentic':
+    case 'strong_match':
       return (
         <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-sm text-xs font-mono font-medium bg-authentic/10 text-authentic border border-authentic/20 ${className}`}>
           <ShieldCheck className="w-3.5 h-3.5" />
-          AUTHENTIC
+          STRONG MATCH
         </span>
       );
-    case 'suspicious':
+    case 'partial_match':
+      return (
+        <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-sm text-xs font-mono font-medium bg-primary/10 text-primary border border-primary/20 ${className}`}>
+          <ShieldMinus className="w-3.5 h-3.5" />
+          PARTIAL MATCH
+        </span>
+      );
+    case 'weak_match':
       return (
         <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-sm text-xs font-mono font-medium bg-suspicious/10 text-suspicious border border-suspicious/20 ${className}`}>
           <AlertTriangle className="w-3.5 h-3.5" />
-          SUSPICIOUS
+          WEAK MATCH
         </span>
       );
-    case 'likely_forged':
+    case 'inconsistent':
       return (
         <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-sm text-xs font-mono font-medium bg-forged/10 text-forged border border-forged/20 ${className}`}>
           <ShieldAlert className="w-3.5 h-3.5" />
-          LIKELY FORGED
+          CLEARLY INCONSISTENT
         </span>
       );
     case 'inconclusive':

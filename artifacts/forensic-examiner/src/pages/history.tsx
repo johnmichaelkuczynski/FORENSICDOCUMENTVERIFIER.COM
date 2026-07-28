@@ -58,16 +58,16 @@ export default function HistoryPage() {
             <span className="text-3xl font-light font-serif">{stats.total}</span>
           </div>
           <div className="bg-card border border-border p-4 rounded-lg flex flex-col">
-            <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-2 text-authentic">Authentic</span>
-            <span className="text-3xl font-light font-serif">{stats.byVerdict.authentic || 0}</span>
+            <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-2 text-authentic">Strong Match</span>
+            <span className="text-3xl font-light font-serif">{stats.byVerdict.strong_match || 0}</span>
           </div>
           <div className="bg-card border border-border p-4 rounded-lg flex flex-col">
-            <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-2 text-suspicious">Suspicious</span>
-            <span className="text-3xl font-light font-serif">{stats.byVerdict.suspicious || 0}</span>
+            <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-2 text-primary">Partial Match</span>
+            <span className="text-3xl font-light font-serif">{(stats.byVerdict.partial_match || 0) + (stats.byVerdict.weak_match || 0)}</span>
           </div>
           <div className="bg-card border border-border p-4 rounded-lg flex flex-col">
-            <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-2 text-forged">Forged</span>
-            <span className="text-3xl font-light font-serif">{stats.byVerdict.likely_forged || 0}</span>
+            <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-2 text-forged">Inconsistent</span>
+            <span className="text-3xl font-light font-serif">{stats.byVerdict.inconsistent || 0}</span>
           </div>
           <div className="bg-card border border-border p-4 rounded-lg flex flex-col">
             <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-2">Inconclusive</span>

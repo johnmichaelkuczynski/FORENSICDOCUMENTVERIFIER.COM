@@ -26,8 +26,8 @@ export const ListDocumentsResponseItem = zod.object({
   "fileName": zod.string(),
   "fileSize": zod.number(),
   "claimedIdentity": zod.string(),
-  "verdict": zod.union([zod.literal('authentic'),zod.literal('suspicious'),zod.literal('likely_forged'),zod.literal('inconclusive'),zod.literal(null)]).nullish(),
-  "confidenceScore": zod.number().nullish().describe('0-100 confidence in the verdict'),
+  "verdict": zod.union([zod.literal('strong_match'),zod.literal('partial_match'),zod.literal('weak_match'),zod.literal('inconsistent'),zod.literal('inconclusive'),zod.literal(null)]).nullish(),
+  "confidenceScore": zod.number().nullish().describe('0-100 match score'),
   "summary": zod.string().nullish(),
   "findings": zod.array(zod.object({
   "category": zod.string().describe('Category of the finding (e.g. metadata, software, timestamp, content, fonts)'),
@@ -60,9 +60,10 @@ export const ListDocumentsResponse = zod.array(ListDocumentsResponseItem)
 export const GetDocumentStatsResponse = zod.object({
   "total": zod.number(),
   "byVerdict": zod.object({
-  "authentic": zod.number().optional(),
-  "suspicious": zod.number().optional(),
-  "likely_forged": zod.number().optional(),
+  "strong_match": zod.number().optional(),
+  "partial_match": zod.number().optional(),
+  "weak_match": zod.number().optional(),
+  "inconsistent": zod.number().optional(),
   "inconclusive": zod.number().optional()
 }),
   "byStatus": zod.object({
@@ -89,8 +90,8 @@ export const AnalyzeDocumentResponse = zod.object({
   "fileName": zod.string(),
   "fileSize": zod.number(),
   "claimedIdentity": zod.string(),
-  "verdict": zod.union([zod.literal('authentic'),zod.literal('suspicious'),zod.literal('likely_forged'),zod.literal('inconclusive'),zod.literal(null)]).nullish(),
-  "confidenceScore": zod.number().nullish().describe('0-100 confidence in the verdict'),
+  "verdict": zod.union([zod.literal('strong_match'),zod.literal('partial_match'),zod.literal('weak_match'),zod.literal('inconsistent'),zod.literal('inconclusive'),zod.literal(null)]).nullish(),
+  "confidenceScore": zod.number().nullish().describe('0-100 match score'),
   "summary": zod.string().nullish(),
   "findings": zod.array(zod.object({
   "category": zod.string().describe('Category of the finding (e.g. metadata, software, timestamp, content, fonts)'),
@@ -129,8 +130,8 @@ export const GetDocumentResponse = zod.object({
   "fileName": zod.string(),
   "fileSize": zod.number(),
   "claimedIdentity": zod.string(),
-  "verdict": zod.union([zod.literal('authentic'),zod.literal('suspicious'),zod.literal('likely_forged'),zod.literal('inconclusive'),zod.literal(null)]).nullish(),
-  "confidenceScore": zod.number().nullish().describe('0-100 confidence in the verdict'),
+  "verdict": zod.union([zod.literal('strong_match'),zod.literal('partial_match'),zod.literal('weak_match'),zod.literal('inconsistent'),zod.literal('inconclusive'),zod.literal(null)]).nullish(),
+  "confidenceScore": zod.number().nullish().describe('0-100 match score'),
   "summary": zod.string().nullish(),
   "findings": zod.array(zod.object({
   "category": zod.string().describe('Category of the finding (e.g. metadata, software, timestamp, content, fonts)'),
@@ -179,8 +180,8 @@ export const ReanalyzeDocumentResponse = zod.object({
   "fileName": zod.string(),
   "fileSize": zod.number(),
   "claimedIdentity": zod.string(),
-  "verdict": zod.union([zod.literal('authentic'),zod.literal('suspicious'),zod.literal('likely_forged'),zod.literal('inconclusive'),zod.literal(null)]).nullish(),
-  "confidenceScore": zod.number().nullish().describe('0-100 confidence in the verdict'),
+  "verdict": zod.union([zod.literal('strong_match'),zod.literal('partial_match'),zod.literal('weak_match'),zod.literal('inconsistent'),zod.literal('inconclusive'),zod.literal(null)]).nullish(),
+  "confidenceScore": zod.number().nullish().describe('0-100 match score'),
   "summary": zod.string().nullish(),
   "findings": zod.array(zod.object({
   "category": zod.string().describe('Category of the finding (e.g. metadata, software, timestamp, content, fonts)'),
