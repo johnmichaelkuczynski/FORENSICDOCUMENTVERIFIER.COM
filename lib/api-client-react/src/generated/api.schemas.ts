@@ -39,6 +39,25 @@ export interface Finding {
   description: string;
 }
 
+export interface DocumentTimelineSignal {
+  source: string;
+  date: string;
+  type: 'stated_creation' | 'stated_modification' | 'not_before' | 'not_after';
+  confidence: 'high' | 'medium' | 'low';
+  detail: string;
+}
+
+export interface DocumentTimeline {
+  statedCreationDate: string | null;
+  statedModDate: string | null;
+  earliestPossibleDate: string | null;
+  latestPossibleDate: string;
+  dominantDate: string | null;
+  confidence: 'exact' | 'bounded' | 'unknown';
+  summary: string;
+  signals: DocumentTimelineSignal[];
+}
+
 export interface DocumentMetadata {
   /** @nullable */
   author?: string | null;
@@ -57,6 +76,7 @@ export interface DocumentMetadata {
   hasDigitalSignature?: boolean;
   /** @nullable */
   pdfVersion?: string | null;
+  documentTimeline?: DocumentTimeline | null;
 }
 
 export type DocumentAnalysisStatus = typeof DocumentAnalysisStatus[keyof typeof DocumentAnalysisStatus];

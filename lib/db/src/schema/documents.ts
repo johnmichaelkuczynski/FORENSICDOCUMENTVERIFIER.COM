@@ -54,6 +54,25 @@ export interface ProvenanceEvent {
   detail: string | null;      // Human-readable extra context
 }
 
+export interface DocumentTimelineSignal {
+  source: string;
+  date: string;                // ISO 8601 — at minimum YYYY-MM-DD
+  type: "stated_creation" | "stated_modification" | "not_before" | "not_after";
+  confidence: "high" | "medium" | "low";
+  detail: string;              // Human-readable explanation of what this signal means
+}
+
+export interface DocumentTimeline {
+  statedCreationDate: string | null;   // From PDF/XMP metadata
+  statedModDate: string | null;        // From PDF/XMP metadata
+  earliestPossibleDate: string | null; // Lowest "not before" bound from software version
+  latestPossibleDate: string;          // Upload timestamp — hard upper bound
+  dominantDate: string | null;         // Best single date answer
+  confidence: "exact" | "bounded" | "unknown";
+  summary: string;                     // Plain-English sentence ready for display or chat
+  signals: DocumentTimelineSignal[];
+}
+
 export interface MergedComponent {
   index: number;
   title: string | null;
@@ -154,6 +173,9 @@ export interface DocumentMetadata {
   isMergedDocument: boolean;
   mergedComponents: MergedComponent[];
   derivedFromId: string | null;       // xmpMM:DerivedFrom DocumentID
+
+  // ── Creation timeline (synthesized from all date signals) ─────────────────
+  documentTimeline?: DocumentTimeline | null;
 }
 
 export const insertDocumentSchema = createInsertSchema(documentsTable).omit({

@@ -6,7 +6,7 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import pdfParse from "pdf-parse";
 import { openai } from "@workspace/integrations-openai-ai-server";
-import type { DocumentMetadata, Finding, FontInfo, XmpHistoryEntry, EmbeddedUrl, ProvenanceEvent, MergedComponent } from "@workspace/db";
+import type { DocumentMetadata, DocumentTimeline, DocumentTimelineSignal, Finding, FontInfo, XmpHistoryEntry, EmbeddedUrl, ProvenanceEvent, MergedComponent } from "@workspace/db";
 import { logger } from "./logger";
 
 const execFileAsync = promisify(execFile);
@@ -430,13 +430,21 @@ function extractMergedComponents(
 
 function normalizeDate(raw: unknown): string | null {
   if (!raw || typeof raw !== "string") return null;
-  const m = raw.match(/^D:(\d{4})(\d{2})(\d{2})(\d{2})?(\d{2})?(\d{2})?/);
-  if (m) {
-    const [, yr, mo, dy, hh, mm, ss] = m;
+  // PDF Info Dictionary format: D:YYYYMMDDHHmmSS[Z|±HH'mm']
+  const pdfM = raw.match(/^D:(\d{4})(\d{2})(\d{2})(\d{2})?(\d{2})?(\d{2})?/);
+  if (pdfM) {
+    const [, yr, mo, dy, hh, mm, ss] = pdfM;
     if (hh) return `${yr}-${mo}-${dy} ${hh}:${mm ?? "00"}:${ss ?? "00"}`;
     return `${yr}-${mo}-${dy}`;
   }
-  // ISO-ish
+  // ExifTool format: YYYY:MM:DD HH:MM:SS[±HH:MM]
+  const exifM = raw.match(/^(\d{4}):(\d{2}):(\d{2})(?:\s(\d{2}):(\d{2}):(\d{2}))?/);
+  if (exifM) {
+    const [, yr, mo, dy, hh, mm, ss] = exifM;
+    if (hh) return `${yr}-${mo}-${dy} ${hh}:${mm}:${ss}`;
+    return `${yr}-${mo}-${dy}`;
+  }
+  // ISO-ish: YYYY-MM-DD...
   if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 19);
   return raw.slice(0, 50);
 }
@@ -1126,6 +1134,253 @@ Return ONLY valid JSON (no markdown fences):
   };
 }
 
+// ─── Document Creation Timeline Engine ───────────────────────────────────────
+
+/** Returns approximate first-release date for known software versions, or null. */
+function parseSoftwareReleaseDate(sw: string): { date: string; detail: string } | null {
+  const s = sw.toLowerCase();
+
+  // ── Adobe Acrobat / PDFMaker ──────────────────────────────────────────────
+  const acrobatMatch = s.match(/(?:acrobat|pdfmaker)\s+(\d+)(?:\.\d+)?/);
+  if (acrobatMatch) {
+    const ver = parseInt(acrobatMatch[1]);
+    if (ver >= 20 && ver <= 30) {
+      const year = 2000 + ver;
+      return { date: `${year}-01-01`, detail: `Adobe Acrobat ${ver} was first released in ${year}` };
+    }
+    if (ver === 11) return { date: "2012-10-15", detail: "Adobe Acrobat XI was released in October 2012" };
+    if (ver === 10) return { date: "2010-11-15", detail: "Adobe Acrobat X was released in November 2010" };
+    if (ver === 9)  return { date: "2008-06-01", detail: "Adobe Acrobat 9 was released in June 2008" };
+    if (ver === 8)  return { date: "2006-11-01", detail: "Adobe Acrobat 8 was released in November 2006" };
+  }
+
+  // ── LibreOffice ───────────────────────────────────────────────────────────
+  const loMatch = s.match(/libreoffice[\s/](\d+)\.(\d+)/);
+  if (loMatch) {
+    const major = parseInt(loMatch[1]);
+    const minor = parseInt(loMatch[2]);
+    if (major === 25) return { date: "2025-01-01", detail: "LibreOffice 25.x was released in early 2025" };
+    if (major === 24) return { date: "2024-01-01", detail: "LibreOffice 24.x was released in early 2024" };
+    if (major === 7) {
+      if (minor >= 6) return { date: "2023-08-01", detail: "LibreOffice 7.6 was released in August 2023" };
+      if (minor >= 4) return { date: "2022-08-01", detail: "LibreOffice 7.4 was released in August 2022" };
+      if (minor >= 2) return { date: "2021-09-01", detail: "LibreOffice 7.2 was released in September 2021" };
+      return { date: "2021-01-28", detail: "LibreOffice 7.0 was released in January 2021" };
+    }
+    if (major === 6) return { date: "2018-01-31", detail: "LibreOffice 6.x was first released in January 2018" };
+    if (major === 5) return { date: "2015-08-05", detail: "LibreOffice 5.x was first released in August 2015" };
+  }
+
+  // ── macOS ─────────────────────────────────────────────────────────────────
+  const macosMatch = s.match(/mac\s*os\s*x?\s*(\d+)[._](\d+)/i);
+  if (macosMatch) {
+    const major = parseInt(macosMatch[1]);
+    const minor = parseInt(macosMatch[2]);
+    const MAP: Record<string, string> = {
+      "15":    "2024-09-16", "14":    "2023-09-26", "13":    "2022-10-24",
+      "12":    "2021-10-25", "11":    "2020-11-12",
+      "10.15": "2019-10-07", "10.14": "2018-09-24", "10.13": "2017-09-25",
+      "10.12": "2016-09-20", "10.11": "2015-09-30", "10.10": "2014-10-16",
+    };
+    const key = major >= 11 ? String(major) : `${major}.${minor}`;
+    const date = MAP[key];
+    if (date) return { date, detail: `macOS ${key} was released on ${date.slice(0, 10)}` };
+  }
+
+  // ── iOS ───────────────────────────────────────────────────────────────────
+  const iosMatch = s.match(/\bios\s+(\d+)\b/i);
+  if (iosMatch) {
+    const IOS: Record<number, string> = {
+      18: "2024-09-16", 17: "2023-09-18", 16: "2022-09-12",
+      15: "2021-09-20", 14: "2020-09-16", 13: "2019-09-19",
+    };
+    const date = IOS[parseInt(iosMatch[1])];
+    if (date) return { date, detail: `iOS ${iosMatch[1]} was released on ${date.slice(0, 10)}` };
+  }
+
+  // ── Microsoft Office / Word ───────────────────────────────────────────────
+  if (/microsoft\s+365|office\s+365/.test(s)) {
+    return { date: "2017-01-01", detail: "Microsoft 365 in its current subscription form launched in early 2017" };
+  }
+  if (/word\s+2021|office\s+2021/.test(s)) return { date: "2021-10-05", detail: "Microsoft Office 2021 was released on October 5, 2021" };
+  if (/word\s+2019|office\s+2019/.test(s)) return { date: "2018-09-24", detail: "Microsoft Office 2019 was released on September 24, 2018" };
+  if (/word\s+2016|office\s+2016/.test(s)) return { date: "2015-09-22", detail: "Microsoft Office 2016 was released on September 22, 2015" };
+  if (/word\s+2013|office\s+2013/.test(s)) return { date: "2013-01-29", detail: "Microsoft Office 2013 was released on January 29, 2013" };
+  if (/word\s+2010|office\s+2010/.test(s)) return { date: "2010-06-15", detail: "Microsoft Office 2010 was released on June 15, 2010" };
+  if (/word\s+2007|office\s+2007/.test(s)) return { date: "2007-01-30", detail: "Microsoft Office 2007 was released on January 30, 2007" };
+  // "Microsoft Word 16.0.NNNNN" — version 16 = Office 2016/2019/2021/365; build narrows it
+  const wordBuild = s.match(/microsoft[\s\-]?word\s+16\.0\.(\d+)/);
+  if (wordBuild) {
+    const build = parseInt(wordBuild[1]);
+    if (build >= 16000) return { date: "2023-01-01", detail: `Word 16.0.${build} corresponds to a 2023+ Microsoft 365 release` };
+    if (build >= 14000) return { date: "2021-10-05", detail: `Word 16.0.${build} corresponds to a 2021+ Microsoft 365 release` };
+    if (build >= 12000) return { date: "2020-01-01", detail: `Word 16.0.${build} corresponds to a 2020+ Microsoft 365 release` };
+    if (build >= 10000) return { date: "2018-09-24", detail: `Word 16.0.${build} corresponds to an Office 2019-era release` };
+    return { date: "2015-09-22", detail: `Word 16.0.${build} is Office 2016 or later (released September 2015)` };
+  }
+
+  // ── Google / Chrome ───────────────────────────────────────────────────────
+  const chromeMatch = s.match(/chrome\/(\d+)\b/i);
+  if (chromeMatch) {
+    const ver = parseInt(chromeMatch[1]);
+    if (ver >= 120) return { date: "2023-12-01", detail: `Chrome ${ver} was released around December 2023 or later` };
+    if (ver >= 100) return { date: "2022-04-01", detail: `Chrome ${ver} was released around 2022-2023` };
+    if (ver >= 80)  return { date: "2020-02-01", detail: `Chrome ${ver} was released around 2020-2021` };
+  }
+  if (s.includes("google docs")) return { date: "2006-10-01", detail: "Google Docs launched in October 2006" };
+
+  // ── Windows ───────────────────────────────────────────────────────────────
+  if (s.includes("windows 11")) return { date: "2021-10-05", detail: "Windows 11 was released on October 5, 2021" };
+  if (s.includes("windows 10")) return { date: "2015-07-29", detail: "Windows 10 was released on July 29, 2015" };
+  if (s.includes("windows 8"))  return { date: "2012-10-26", detail: "Windows 8 was released on October 26, 2012" };
+  if (s.includes("windows 7"))  return { date: "2009-10-22", detail: "Windows 7 was released on October 22, 2009" };
+
+  // ── Ghostscript ───────────────────────────────────────────────────────────
+  const gsMatch = s.match(/ghostscript\s+(\d+)\.(\d+)/i);
+  if (gsMatch) {
+    const major = parseInt(gsMatch[1]);
+    const minor = parseInt(gsMatch[2]);
+    if (major === 10) {
+      if (minor >= 4) return { date: "2024-03-01", detail: "Ghostscript 10.4 was released in 2024" };
+      if (minor >= 2) return { date: "2023-03-01", detail: "Ghostscript 10.2 was released in 2023" };
+      return { date: "2022-06-01", detail: "Ghostscript 10.x was first released in 2022" };
+    }
+    if (major === 9) return { date: "2010-06-01", detail: "Ghostscript 9.x was first released in 2010" };
+  }
+
+  return null;
+}
+
+/** Synthesizes all available date evidence into a definitive timeline object. */
+function computeDocumentTimeline(metadata: DocumentMetadata, uploadedAt: string): DocumentTimeline {
+  const signals: DocumentTimelineSignal[] = [];
+
+  // ── Stated creation dates ─────────────────────────────────────────────────
+  if (metadata.creationDate) {
+    signals.push({
+      source: "PDF Info Dictionary — CreationDate",
+      date: metadata.creationDate,
+      type: "stated_creation",
+      confidence: "medium",
+      detail: "Stored in the PDF Info Dictionary. Can be manually edited, but editing without re-signing typically leaves detectable inconsistencies.",
+    });
+  }
+  if (metadata.xmpCreateDate && metadata.xmpCreateDate !== metadata.creationDate) {
+    signals.push({
+      source: "XMP Metadata — xmp:CreateDate",
+      date: metadata.xmpCreateDate,
+      type: "stated_creation",
+      confidence: "medium",
+      detail: "Embedded in the XMP metadata packet inside the PDF. A second independent record of creation date.",
+    });
+  }
+
+  // ── Stated modification dates ─────────────────────────────────────────────
+  if (metadata.modificationDate) {
+    signals.push({
+      source: "PDF Info Dictionary — ModDate",
+      date: metadata.modificationDate,
+      type: "stated_modification",
+      confidence: "medium",
+      detail: "Records the last time the PDF Info Dictionary was written. Updated by PDF editors on each save.",
+    });
+  }
+  if (metadata.xmpModifyDate && metadata.xmpModifyDate !== metadata.modificationDate) {
+    signals.push({
+      source: "XMP Metadata — xmp:ModifyDate",
+      date: metadata.xmpModifyDate,
+      type: "stated_modification",
+      confidence: "medium",
+      detail: "Last-modified date as recorded in the XMP packet. Typically written in lockstep with the Info Dictionary ModDate.",
+    });
+  }
+
+  // ── XMP edit history ──────────────────────────────────────────────────────
+  for (const entry of (metadata.xmpHistory ?? []).filter(h => h.when)) {
+    signals.push({
+      source: `XMP Edit History — ${entry.action ?? "edit"}`,
+      date: entry.when!,
+      type: "stated_modification",
+      confidence: "low",
+      detail: `Saved by: ${entry.softwareAgent ?? "unknown"}. XMP history is written by Adobe products and is difficult to forge without leaving structural inconsistencies.`,
+    });
+  }
+
+  // ── Software version → not-before date ───────────────────────────────────
+  const swCandidates = [
+    metadata.creator, metadata.producer, metadata.xmpCreatorTool,
+    ...(metadata.softwareChain ?? []),
+  ].filter((s): s is string => typeof s === "string" && s.length > 0);
+
+  const notBeforeHits: Array<{ software: string; date: string; detail: string }> = [];
+  for (const sw of swCandidates) {
+    const hit = parseSoftwareReleaseDate(sw);
+    if (hit) notBeforeHits.push({ software: sw, ...hit });
+  }
+  // Pick the latest (most restrictive lower bound)
+  notBeforeHits.sort((a, b) => b.date.localeCompare(a.date));
+  const bestNotBefore = notBeforeHits[0] ?? null;
+  if (bestNotBefore) {
+    signals.push({
+      source: `Software fingerprint: "${bestNotBefore.software}"`,
+      date: bestNotBefore.date,
+      type: "not_before",
+      confidence: "high",
+      detail: `${bestNotBefore.detail}. A document produced by this software cannot predate this release.`,
+    });
+  }
+
+  // ── Upload (hard upper bound) ─────────────────────────────────────────────
+  signals.push({
+    source: "Uploaded to Forensic Document Examiner",
+    date: uploadedAt,
+    type: "not_after",
+    confidence: "high",
+    detail: "The document was submitted to this system at this time. It definitively could not have been created after this date.",
+  });
+
+  // ── Synthesize ────────────────────────────────────────────────────────────
+  const statedCreationDates = signals
+    .filter(s => s.type === "stated_creation")
+    .map(s => s.date)
+    .sort();
+  const dominantDate = statedCreationDates[0] ?? null;
+  const notBeforeDate = bestNotBefore?.date ?? null;
+  const latestPossible = uploadedAt.slice(0, 10);
+
+  let confidence: "exact" | "bounded" | "unknown";
+  let summary: string;
+
+  if (dominantDate) {
+    const domDay = dominantDate.slice(0, 10);
+    if (notBeforeDate && dominantDate < notBeforeDate) {
+      // Stated date is BEFORE software release — contradiction
+      confidence = "bounded";
+      summary = `⚠ The document states a creation date of ${domDay}, but this contradicts the detected software ("${bestNotBefore!.software}"), which was not released until ${notBeforeDate.slice(0, 10)}. The document therefore could NOT have been created before ${notBeforeDate.slice(0, 10)}. It was uploaded on ${latestPossible}, making that the hard upper bound.`;
+    } else {
+      confidence = "exact";
+      summary = `The PDF metadata states this document was created on ${domDay}. This is consistent with the detected software version. It was uploaded on ${latestPossible}.`;
+    }
+  } else if (notBeforeDate) {
+    confidence = "bounded";
+    summary = `No creation date is embedded in the metadata. Based on the software version ("${bestNotBefore!.software}"), this document could NOT have been created before ${notBeforeDate.slice(0, 10)}. It was uploaded on ${latestPossible}, which is the hard upper bound.`;
+  } else {
+    confidence = "unknown";
+    summary = `No creation date is embedded in this document and no identifiable software version was found. The only certain date bound is the upload date of ${latestPossible} — the document existed no later than this.`;
+  }
+
+  return {
+    statedCreationDate: metadata.creationDate ?? metadata.xmpCreateDate ?? null,
+    statedModDate: metadata.modificationDate ?? metadata.xmpModifyDate ?? null,
+    earliestPossibleDate: notBeforeDate,
+    latestPossibleDate: uploadedAt,
+    dominantDate,
+    confidence,
+    summary,
+    signals,
+  };
+}
+
 // ─── Document Q&A ─────────────────────────────────────────────────────────────
 
 export async function chatWithDocument(
@@ -1133,7 +1388,8 @@ export async function chatWithDocument(
   metadata: DocumentMetadata,
   claimedIdentity: string,
   question: string,
-  history: { role: "user" | "assistant"; content: string }[]
+  history: { role: "user" | "assistant"; content: string }[],
+  uploadedAt?: string
 ): Promise<string> {
   // Re-extract text from file (file is kept permanently)
   let rawText = (metadata as DocumentMetadata & { rawText?: string }).rawText ?? "";
@@ -1180,10 +1436,29 @@ export async function chatWithDocument(
     softwareChain: metadata.softwareChain,
   }, null, 2);
 
+  const timeline = metadata.documentTimeline;
+  const effectiveUploadedAt = uploadedAt ?? timeline?.latestPossibleDate ?? new Date().toISOString();
+
+  const timelineSection = timeline
+    ? `DOCUMENT CREATION TIMELINE (pre-computed — use this for all date questions):
+Confidence: ${timeline.confidence.toUpperCase()}
+${timeline.summary}
+
+Date signals (sorted by reliability):
+${timeline.signals.map(s => `  [${s.type.toUpperCase()}] ${s.date.slice(0, 10)} | ${s.source} | confidence=${s.confidence} | ${s.detail}`).join("\n")}
+
+HARD FACTS:
+- This document was uploaded on: ${effectiveUploadedAt.slice(0, 10)} — it CANNOT have been created after this date.
+${timeline.earliestPossibleDate ? `- Software fingerprint proves it could NOT have been created before: ${timeline.earliestPossibleDate.slice(0, 10)}` : "- No software not-before date established."}
+${timeline.dominantDate ? `- Stated creation date in metadata: ${timeline.dominantDate.slice(0, 10)}` : "- No creation date stated in metadata."}`
+    : `DOCUMENT UPLOAD DATE: ${effectiveUploadedAt.slice(0, 10)} — the document CANNOT have been created after this date.`;
+
   const systemPrompt = `You are a forensic document analyst with deep expertise in PDF forensics, metadata analysis, and document authentication. You have full access to the forensic data extracted from a PDF document.
 
 DOCUMENT FILE NAME: ${metadata.fileSize ? `(${(metadata.fileSize / 1024).toFixed(1)} KB)` : ""}
 CLAIMED IDENTITY: ${claimedIdentity || "(none — exploration mode)"}
+
+${timelineSection}
 
 EXTRACTED METADATA:
 ${metaSummary}
@@ -1191,7 +1466,9 @@ ${metaSummary}
 DOCUMENT TEXT (first 6000 chars):
 ${rawText.slice(0, 6000) || "(No extractable text)"}
 
-Answer the user's questions about this document based ONLY on the data above. Be specific and cite exact field names and values. If asked about a specific page, use the document text to identify page content where possible. If you cannot determine something from the available data, say so clearly rather than guessing.`;
+Answer questions based ONLY on the data above. Be specific and cite exact field names and values.
+When asked "was this document created after [date]?" or "before [date]?", use the DOCUMENT CREATION TIMELINE above to give a definitive yes/no answer with a one-sentence explanation. The upload date is always a hard upper bound.
+If you cannot determine something from the available data, say so clearly rather than guessing.`;
 
   const messages: { role: "user" | "assistant" | "system"; content: string }[] = [
     { role: "system", content: systemPrompt },
@@ -1214,13 +1491,17 @@ export async function analyzeDocument(
   filePath: string,
   fileName: string,
   fileSize: number,
-  claimedIdentity: string
+  claimedIdentity: string,
+  uploadedAt?: string
 ): Promise<AnalysisResult> {
   const buf = fs.readFileSync(filePath);
   const { metadata, rawText } = await extractPdfMetadata(buf, filePath, fileSize);
 
   // Store rawText in metadata for future chat queries (capped at 50k chars)
   (metadata as DocumentMetadata & { rawText: string }).rawText = rawText.slice(0, 50000);
+
+  // Compute and store creation timeline
+  metadata.documentTimeline = computeDocumentTimeline(metadata, uploadedAt ?? new Date().toISOString());
 
   const heuristicFindings = buildHeuristicFindings(metadata, claimedIdentity, rawText);
 

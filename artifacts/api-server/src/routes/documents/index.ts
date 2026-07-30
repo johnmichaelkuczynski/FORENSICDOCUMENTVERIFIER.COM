@@ -76,11 +76,11 @@ function toApiShape(doc: typeof documentsTable.$inferSelect) {
 }
 
 // Background analysis runner — non-blocking
-async function runAnalysis(docId: number, filePath: string, fileName: string, fileSize: number, claimedIdentity: string) {
+async function runAnalysis(docId: number, filePath: string, fileName: string, fileSize: number, claimedIdentity: string, uploadedAt?: string) {
   try {
     await db.update(documentsTable).set({ status: "analyzing" }).where(eq(documentsTable.id, docId));
 
-    const result = await analyzeDocument(filePath, fileName, fileSize, claimedIdentity);
+    const result = await analyzeDocument(filePath, fileName, fileSize, claimedIdentity, uploadedAt);
 
     await db
       .update(documentsTable)
@@ -178,7 +178,7 @@ router.post("/documents/analyze", upload.single("file"), async (req, res): Promi
 
   // Fire and forget — client polls for completion
   setImmediate(() => {
-    runAnalysis(doc.id, req.file!.path, req.file!.originalname, req.file!.size, claimedIdentity).catch((err) => {
+    runAnalysis(doc.id, req.file!.path, req.file!.originalname, req.file!.size, claimedIdentity, doc.createdAt.toISOString()).catch((err) => {
       logger.error({ err }, "Unhandled error in background analysis");
     });
   });
@@ -265,7 +265,7 @@ router.post("/documents/:id/reanalyze", async (req, res): Promise<void> => {
     .where(eq(documentsTable.id, doc.id));
 
   setImmediate(() => {
-    runAnalysis(doc.id, doc.filePath!, doc.fileName, doc.fileSize, doc.claimedIdentity).catch((err) => {
+    runAnalysis(doc.id, doc.filePath!, doc.fileName, doc.fileSize, doc.claimedIdentity, doc.createdAt.toISOString()).catch((err) => {
       logger.error({ err }, "Unhandled error in re-analysis");
     });
   });
@@ -296,6 +296,7 @@ router.post("/documents/:id/chat", async (req, res): Promise<void> => {
       doc.claimedIdentity,
       question,
       history,
+      doc.createdAt.toISOString(),
     );
     res.json({ answer });
   } catch (err) {

@@ -8,7 +8,8 @@ import {
   AlertTriangle, Download, ChevronDown, ChevronRight, Shield, Code2,
   Type, Link2, Clock, Database, AlertOctagon, CheckCircle, XCircle, Minus,
   Globe, Printer, Monitor, Cloud, Layers, GitMerge, Network, History,
-  ScanLine, ExternalLink, MessageSquare, Send, Bot, User as UserIcon
+  ScanLine, ExternalLink, MessageSquare, Send, Bot, User as UserIcon,
+  Calendar
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { format } from 'date-fns';
@@ -517,6 +518,146 @@ interface DeepMeta {
   isMergedDocument?: boolean;
   mergedComponents?: MergedComponent[];
   derivedFromId?: string | null;
+  // Creation timeline
+  documentTimeline?: {
+    statedCreationDate: string | null;
+    statedModDate: string | null;
+    earliestPossibleDate: string | null;
+    latestPossibleDate: string;
+    dominantDate: string | null;
+    confidence: 'exact' | 'bounded' | 'unknown';
+    summary: string;
+    signals: Array<{
+      source: string;
+      date: string;
+      type: 'stated_creation' | 'stated_modification' | 'not_before' | 'not_after';
+      confidence: 'high' | 'medium' | 'low';
+      detail: string;
+    }>;
+  } | null;
+}
+
+// ── Date normalizer for display (handles ExifTool YYYY:MM:DD format) ──────
+
+function normalizeDateDisplay(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  // ExifTool: 2026:06:02 → 2026-06-02
+  const exifM = raw.match(/^(\d{4}):(\d{2}):(\d{2})/);
+  if (exifM) return `${exifM[1]}-${exifM[2]}-${exifM[3]}`;
+  return raw.slice(0, 10);
+}
+
+// ── Document Creation Timeline card ───────────────────────────────────────
+
+function DocumentTimelineCard({ meta, uploadedAt }: { meta: DeepMeta; uploadedAt: string }) {
+  const timeline = meta.documentTimeline;
+
+  // Fallback: assemble basic signals from raw metadata if no pre-computed timeline
+  const statedCreation = normalizeDateDisplay(timeline?.statedCreationDate ?? meta.creationDate ?? meta.xmpCreateDate ?? null);
+  const earliestPossible = normalizeDateDisplay(timeline?.earliestPossibleDate ?? null);
+  const dominantDate = normalizeDateDisplay(timeline?.dominantDate ?? (timeline?.statedCreationDate ?? meta.creationDate ?? meta.xmpCreateDate ?? null));
+  const confidence = timeline?.confidence ?? (dominantDate ? 'exact' : 'unknown');
+  const uploadDay = uploadedAt.slice(0, 10);
+
+  const summary = timeline?.summary ?? (
+    dominantDate
+      ? `The PDF metadata states this document was created on ${dominantDate.slice(0, 10)}. It was uploaded on ${uploadDay}.`
+      : `No creation date is embedded in this document. The upload date of ${uploadDay} is the only reliable upper bound.`
+  );
+
+  const signals = timeline?.signals ?? [
+    ...(statedCreation ? [{ source: 'PDF CreationDate / XMP xmp:CreateDate', date: statedCreation, type: 'stated_creation' as const, confidence: 'medium' as const, detail: 'Stored in PDF metadata — can be manually edited' }] : []),
+    ...(meta.modificationDate && normalizeDateDisplay(meta.modificationDate) !== statedCreation ? [{ source: 'PDF ModDate', date: normalizeDateDisplay(meta.modificationDate) ?? meta.modificationDate, type: 'stated_modification' as const, confidence: 'medium' as const, detail: 'Last modification date in the PDF Info Dictionary' }] : []),
+    { source: 'Uploaded to Forensic Document Examiner', date: uploadedAt, type: 'not_after' as const, confidence: 'high' as const, detail: 'The document definitively could not have been created after this date' },
+  ];
+
+  const signalStyle = (type: string) => {
+    switch (type) {
+      case 'stated_creation':    return { badge: 'bg-primary/15 text-primary border-primary/25',         label: 'STATED CREATION' };
+      case 'stated_modification':return { badge: 'bg-blue-400/15 text-blue-400 border-blue-400/25',     label: 'MODIFICATION' };
+      case 'not_before':         return { badge: 'bg-orange-400/15 text-orange-400 border-orange-400/25', label: 'NOT BEFORE' };
+      case 'not_after':          return { badge: 'bg-green-400/15 text-green-400 border-green-400/25',  label: 'NOT AFTER' };
+      default:                   return { badge: 'bg-secondary/30 text-muted-foreground border-border',  label: 'DATE SIGNAL' };
+    }
+  };
+
+  const confText = (c: string) => ({ high: 'text-green-400/80', medium: 'text-yellow-400/80', low: 'text-muted-foreground/50' })[c] ?? 'text-muted-foreground/50';
+
+  const answerStyle = confidence === 'exact'
+    ? 'bg-green-500/5 border-green-500/20'
+    : confidence === 'bounded'
+      ? 'bg-yellow-500/5 border-yellow-500/20'
+      : 'bg-secondary/20 border-border/50';
+
+  const confLabel = confidence === 'exact' ? '● EXACT DATE KNOWN' : confidence === 'bounded' ? '◐ DATE RANGE BOUNDED' : '○ DATE UNKNOWN';
+  const confColor = confidence === 'exact' ? 'text-green-400' : confidence === 'bounded' ? 'text-yellow-400' : 'text-muted-foreground/60';
+
+  return (
+    <div className="rounded-xl border border-border bg-card overflow-hidden">
+      <div className="flex items-center gap-3 px-6 py-4 border-b border-border">
+        <Calendar className="h-5 w-5 text-primary" />
+        <h3 className="text-xl font-serif text-foreground">Document Creation Timeline</h3>
+        <span className={`ml-auto text-[10px] font-mono uppercase tracking-widest ${confColor}`}>{confLabel}</span>
+      </div>
+
+      <div className="p-6 space-y-5">
+        {/* Main answer */}
+        <div className={`rounded-lg px-5 py-4 border ${answerStyle}`}>
+          <p className="text-sm text-foreground leading-relaxed font-mono whitespace-pre-wrap">{summary}</p>
+        </div>
+
+        {/* Quick-glance date grid */}
+        <div className="grid grid-cols-3 gap-3">
+          <div className="bg-card border border-border/50 rounded-lg px-4 py-3">
+            <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest block mb-1">Stated Creation</span>
+            <span className="font-mono text-sm text-foreground">
+              {statedCreation ? statedCreation.slice(0, 10) : <span className="text-muted-foreground/30 italic text-xs">— not set</span>}
+            </span>
+          </div>
+          <div className="bg-card border border-border/50 rounded-lg px-4 py-3">
+            <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest block mb-1">Earliest Possible</span>
+            <span className="font-mono text-sm text-foreground">
+              {earliestPossible ? earliestPossible.slice(0, 10) : <span className="text-muted-foreground/30 italic text-xs">— not determined</span>}
+            </span>
+          </div>
+          <div className="bg-card border border-primary/30 rounded-lg px-4 py-3">
+            <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest block mb-1">No Later Than</span>
+            <span className="font-mono text-sm text-primary font-semibold">{uploadDay}</span>
+          </div>
+        </div>
+
+        {/* All date signals */}
+        {signals.length > 0 && (
+          <div className="space-y-2">
+            <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest block">All Date Evidence</span>
+            {signals.map((sig, i) => {
+              const { badge, label } = signalStyle(sig.type);
+              return (
+                <div key={i} className="flex items-start gap-3 rounded-lg bg-secondary/15 border border-border/40 px-4 py-2.5">
+                  <span className={`shrink-0 text-[8px] font-mono font-bold px-2 py-0.5 rounded border mt-0.5 whitespace-nowrap ${badge}`}>
+                    {label}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-baseline gap-2 flex-wrap">
+                      <span className="font-mono text-[13px] text-foreground">{sig.date.slice(0, 10)}</span>
+                      <span className="text-[11px] text-muted-foreground/60">·</span>
+                      <span className="text-[11px] text-muted-foreground truncate">{sig.source}</span>
+                    </div>
+                    {sig.detail && (
+                      <p className="text-[10px] text-muted-foreground/55 mt-0.5 leading-snug">{sig.detail}</p>
+                    )}
+                  </div>
+                  <span className={`shrink-0 text-[9px] font-mono uppercase tracking-wider mt-0.5 ${confText(sig.confidence)}`}>
+                    {sig.confidence}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // ── Origin icon helper ─────────────────────────────────────────────────────
@@ -1255,6 +1396,14 @@ export default function ResultsPage() {
             </div>
           </div>
 
+          {/* ── Document Creation Timeline ──────────────────────────────────── */}
+          {doc.metadata && (
+            <DocumentTimelineCard
+              meta={doc.metadata as DeepMeta}
+              uploadedAt={doc.createdAt}
+            />
+          )}
+
           {/* Details Grid */}
           <div className="grid md:grid-cols-3 gap-8">
             
@@ -1394,10 +1543,10 @@ export default function ResultsPage() {
               {chatMessages.length === 0 && (
                 <div className="mb-4 flex flex-wrap gap-2">
                   {[
+                    'Was this document created after January 1, 2024?',
                     'Who created this document and with what software?',
                     'What does page 1 contain?',
                     'Is there any evidence of tampering?',
-                    'Summarize the document timeline',
                   ].map(suggestion => (
                     <button
                       key={suggestion}
